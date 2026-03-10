@@ -58,8 +58,10 @@ pub(crate) fn apply_middleware(mut router: Router, middleware: Middlewares) -> R
             let limit = byte_unit::Byte::from_str(&body_limit)
                 .unwrap_or_else(|_| panic!("parse limit payload str failed: {}", &body_limit));
 
-            let limit_payload = RequestBodyLimitLayer::new(limit.as_u64() as usize);
-            router = router.layer(limit_payload);
+            let limit = limit.as_u64() as usize;
+            // Override axum's default 2MB body limit for extractors (Multipart, Json, etc.)
+            router = router.layer(axum::extract::DefaultBodyLimit::max(limit));
+            router = router.layer(RequestBodyLimitLayer::new(limit));
         }
     }
     if let Some(cors) = middleware.cors {
@@ -157,4 +159,123 @@ fn build_cors_middleware(cors: &CorsMiddleware) -> Result<CorsLayer> {
     }
 
     Ok(layer)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Bytes;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::post;
+    use summer::App;
+    use summer::plugin::ComponentRegistry;
+    use tower::ServiceExt;
+    use crate::WebConfigurator;
+
+    async fn upload_handler(body: Bytes) -> String {
+        format!("Received {} bytes", body.len())
+    }
+
+    /// After fix: TOML config `body_limit = "5MB"` allows 3MB upload.
+    #[tokio::test]
+    async fn test_configured_body_limit_allows_large_upload() {
+        let toml_config = r#"
+            [web.openapi]
+            [web.middlewares]
+            limit_payload = { enable = true, body_limit = "5MB" }
+        "#;
+
+        let built_app = App::new()
+            .use_config_str(toml_config)
+            .add_router(crate::Router::new().route("/upload", post(upload_handler)))
+            .add_plugin(crate::WebPlugin)
+            .build()
+            .await
+            .expect("Failed to build app");
+
+        let router = built_app.get_component::<crate::Router>().unwrap();
+
+        // 3MB — exceeds axum's default 2MB, within configured 5MB
+        let body = "x".repeat(3 * 1024 * 1024);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/upload")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Body exceeding configured limit is rejected.
+    #[tokio::test]
+    async fn test_configured_body_limit_rejects_oversized() {
+        let toml_config = r#"
+            [web.openapi]
+            [web.middlewares]
+            limit_payload = { enable = true, body_limit = "1KB" }
+        "#;
+
+        let built_app = App::new()
+            .use_config_str(toml_config)
+            .add_router(crate::Router::new().route("/upload", post(upload_handler)))
+            .add_plugin(crate::WebPlugin)
+            .build()
+            .await
+            .expect("Failed to build app");
+
+        let router = built_app.get_component::<crate::Router>().unwrap();
+
+        // 2KB — exceeds configured 1KB
+        let body = "x".repeat(2 * 1024);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/upload")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Body within configured limit succeeds.
+    #[tokio::test]
+    async fn test_configured_body_limit_allows_within_limit() {
+        let toml_config = r#"
+            [web.openapi]
+            [web.middlewares]
+            limit_payload = { enable = true, body_limit = "1KB" }
+        "#;
+
+        let built_app = App::new()
+            .use_config_str(toml_config)
+            .add_router(crate::Router::new().route("/upload", post(upload_handler)))
+            .add_plugin(crate::WebPlugin)
+            .build()
+            .await
+            .expect("Failed to build app");
+
+        let router = built_app.get_component::<crate::Router>().unwrap();
+
+        let body = "x".repeat(512);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/upload")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }
