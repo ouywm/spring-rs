@@ -12,10 +12,25 @@ const HTTP_METHODS: &[(&str, &str)] = &[
     ("head", "HEAD"),
     ("options", "OPTIONS"),
     ("trace", "TRACE"),
+    ("get_api", "GET"),
+    ("post_api", "POST"),
+    ("put_api", "PUT"),
+    ("delete_api", "DELETE"),
+    ("patch_api", "PATCH"),
+    ("head_api", "HEAD"),
+    ("options_api", "OPTIONS"),
+    ("trace_api", "TRACE"),
 ];
 
 const ROUTE_ATTRS: &[&str] = &[
-    "get", "post", "put", "delete", "patch", "head", "options", "trace", "route", "routes"
+    "get", "post", "put", "delete", "patch", "head", "options", "trace", "route", "routes",
+    "get_api", "post_api", "put_api", "delete_api", "patch_api", "head_api", "options_api", "trace_api",
+    "api_route", "api_routes",
+];
+
+const OPENAPI_ATTRS: &[&str] = &[
+    "get_api", "post_api", "put_api", "delete_api", "patch_api", "head_api", "options_api", "trace_api",
+    "api_route", "api_routes",
 ];
 
 struct MiddlewareList {
@@ -38,6 +53,10 @@ fn attr_to_http_method(attr: &syn::Attribute) -> Option<&'static str> {
 
 fn is_route_attr(attr: &syn::Attribute) -> bool {
     ROUTE_ATTRS.iter().any(|&route_attr| attr.path().is_ident(route_attr))
+}
+
+fn is_openapi_attr(attr: &syn::Attribute) -> bool {
+    OPENAPI_ATTRS.iter().any(|&name| attr.path().is_ident(name))
 }
 
 fn extract_and_filter_route_attrs(attrs: &mut Vec<syn::Attribute>) -> Vec<syn::Attribute> {
@@ -187,11 +206,14 @@ struct RouteInfo {
     path: String,
     methods: Vec<String>,
     function_middlewares: Vec<syn::Expr>,
+    is_openapi: bool,
+    doc_attributes: Vec<syn::Attribute>,
+    fn_ast: Option<syn::ItemFn>,
 }
 
 fn collect_and_strip_route_info(module: &mut syn::ItemMod, _nest_prefix: Option<&str>) -> syn::Result<Vec<RouteInfo>> {
     let mut route_info = Vec::new();
-    
+
     let Some((_, items)) = &mut module.content else {
         return Ok(route_info);
     };
@@ -199,10 +221,26 @@ fn collect_and_strip_route_info(module: &mut syn::ItemMod, _nest_prefix: Option<
     for item in items {
         if let syn::Item::Fn(fun) = item {
             let function_middlewares = extract_function_middlewares(&fun.attrs)?;
+            let has_openapi = fun.attrs.iter().any(|a| is_openapi_attr(a));
+            let doc_attributes: Vec<syn::Attribute> = fun
+                .attrs
+                .iter()
+                .filter(|attr| attr.path().is_ident("doc"))
+                .cloned()
+                .collect();
+            let fn_ast_snapshot = if has_openapi { Some(fun.clone()) } else { None };
             let route_attrs = extract_and_filter_route_attrs(&mut fun.attrs);
-            
+
             for attr in route_attrs {
-                if let Some(route) = process_route_attribute(&attr, &fun.sig.ident, &function_middlewares)? {
+                let is_openapi = is_openapi_attr(&attr);
+                if let Some(route) = process_route_attribute(
+                    &attr,
+                    &fun.sig.ident,
+                    &function_middlewares,
+                    is_openapi,
+                    &doc_attributes,
+                    fn_ast_snapshot.as_ref(),
+                )? {
                     route_info.push(route);
                 }
             }
@@ -213,35 +251,55 @@ fn collect_and_strip_route_info(module: &mut syn::ItemMod, _nest_prefix: Option<
 }
 
 fn process_route_attribute(
-    attr: &syn::Attribute, 
-    func_name: &syn::Ident, 
-    function_middlewares: &[syn::Expr]
+    attr: &syn::Attribute,
+    func_name: &syn::Ident,
+    function_middlewares: &[syn::Expr],
+    is_openapi: bool,
+    doc_attributes: &[syn::Attribute],
+    fn_ast: Option<&syn::ItemFn>,
 ) -> syn::Result<Option<RouteInfo>> {
     let Some(method) = attr_to_http_method(attr) else {
         return Ok(None);
     };
-    
+
     let Ok(path_lit) = attr.parse_args::<syn::LitStr>() else {
         return Ok(None);
     };
-    
+
     Ok(Some(RouteInfo {
         func_name: func_name.clone(),
         path: path_lit.value(),
         methods: vec![method.to_string()],
         function_middlewares: function_middlewares.to_vec(),
+        is_openapi,
+        doc_attributes: if is_openapi { doc_attributes.to_vec() } else { vec![] },
+        fn_ast: if is_openapi { fn_ast.cloned() } else { None },
     }))
 }
 
 fn extract_route_info_from_function(function: &syn::ItemFn) -> syn::Result<Vec<RouteInfo>> {
     let mut route_info = Vec::new();
-    
+    let doc_attributes: Vec<syn::Attribute> = function
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .cloned()
+        .collect();
+
     for attr in &function.attrs {
-        if let Some(route) = process_route_attribute(attr, &function.sig.ident, &[])? {
+        let is_openapi = is_openapi_attr(attr);
+        if let Some(route) = process_route_attribute(
+            attr,
+            &function.sig.ident,
+            &[],
+            is_openapi,
+            &doc_attributes,
+            if is_openapi { Some(function) } else { None },
+        )? {
             route_info.push(route);
         }
     }
-    
+
     Ok(route_info)
 }
 
@@ -264,12 +322,20 @@ fn generate_middleware_components(
 }
 
 fn generate_route_registration(route: &RouteInfo) -> TokenStream2 {
+    if route.is_openapi {
+        generate_openapi_route_registration(route)
+    } else {
+        generate_plain_route_registration(route)
+    }
+}
+
+fn generate_plain_route_registration(route: &RouteInfo) -> TokenStream2 {
     let func_name = &route.func_name;
     let path = &route.path;
     let methods = generate_method_filters(&route.methods);
-    
+
     if route.function_middlewares.is_empty() {
-        quote! { 
+        quote! {
             let __method_router = ::summer_web::MethodRouter::new();
             #(let __method_router = ::summer_web::MethodRouter::on(__method_router, #methods, #func_name);)*
             __module_router = ::summer_web::Router::route(__module_router, #path, __method_router);
@@ -280,15 +346,124 @@ fn generate_route_registration(route: &RouteInfo) -> TokenStream2 {
             .rev()
             .map(|middleware| quote! { #middleware })
             .collect::<Vec<_>>();
-        
-        quote! { 
+
+        quote! {
             let mut __function_router = ::summer_web::Router::new();
             let __method_router = ::summer_web::MethodRouter::new();
             #(let __method_router = ::summer_web::MethodRouter::on(__method_router, #methods, #func_name);)*
             __function_router = ::summer_web::Router::route(__function_router, #path, __method_router);
-            
+
             #(let __function_router = __function_router.layer(#function_middleware_layers);)*
-            
+
+            __module_router = __module_router.merge(__function_router);
+        }
+    }
+}
+
+fn generate_openapi_route_registration(route: &RouteInfo) -> TokenStream2 {
+    let func_name = &route.func_name;
+    let path = &route.path;
+    let methods = generate_method_filters(&route.methods);
+    let fn_name_str = func_name.to_string();
+
+    let operation = crate::route::openapi::parse_doc_attributes(&route.doc_attributes, &fn_name_str);
+    let status_codes = &operation.status_codes;
+
+    let status_code_gen = if !status_codes.is_empty() {
+        let registrations = status_codes.iter().map(|variant_path| {
+            let path_parts: Vec<&str> = variant_path.split("::").collect();
+            if path_parts.len() < 2 {
+                panic!("Invalid status_codes format: {}. Expected format: TypeName::VariantName", variant_path);
+            }
+            let type_path_parts = &path_parts[..path_parts.len() - 1];
+            let type_path_str = type_path_parts.join("::");
+            let type_path = syn::parse_str::<syn::Path>(&type_path_str)
+                .unwrap_or_else(|_| panic!("Invalid type path: {}", type_path_str));
+            quote! {
+                {
+                    ::summer_web::openapi::register_error_response_by_variant::<#type_path>(
+                        ctx,
+                        &mut __operation,
+                        #variant_path
+                    );
+                }
+            }
+        });
+        quote! { #(#registrations)* }
+    } else {
+        quote! {}
+    };
+
+    let (input_types_gen, output_gen) = if let Some(ast) = &route.fn_ast {
+        let (input_tys, output_ty) = crate::utils::extract_fn_types(ast);
+        let input_gen = if input_tys.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                #(
+                    <#input_tys as ::summer_web::aide::OperationInput>::operation_input(ctx, &mut __operation);
+                )*
+            }
+        };
+        let out_gen = if let Some(ty) = output_ty {
+            quote! {
+                for (code, res) in <#ty as ::summer_web::aide::OperationOutput>::inferred_responses(ctx, &mut __operation) {
+                    ::summer_web::openapi::set_inferred_response(ctx, &mut __operation, code, res);
+                }
+            }
+        } else {
+            quote! {}
+        };
+        (input_gen, out_gen)
+    } else {
+        (quote! {}, quote! {})
+    };
+
+    let method_lowercase_strs: Vec<String> = route.methods.iter().map(|m| m.to_lowercase()).collect();
+
+    let operation_binder = method_lowercase_strs.iter().map(|method_str| {
+        quote! {
+            let mut __operation = #operation;
+            ::summer_web::aide::generate::in_context(|ctx| {
+                #input_types_gen
+                #output_gen
+                #status_code_gen
+            });
+            __module_router = __module_router.api_route_docs_with(
+                #path,
+                ::summer_web::aide::axum::routing::ApiMethodDocs::new(#method_str, __operation),
+                __transform,
+            );
+        }
+    });
+
+    if route.function_middlewares.is_empty() {
+        quote! {
+            let __method_router = ::summer_web::MethodRouter::new();
+            #(let __method_router = ::summer_web::MethodRouter::on(__method_router, #methods, #func_name);)*
+            let __method_router = ::summer_web::ApiMethodRouter::from(__method_router);
+            __module_router = ::summer_web::Router::api_route(__module_router, #path, __method_router);
+            let __transform = ::summer_web::default_transform;
+            #(#operation_binder)*
+        }
+    } else {
+        let function_middleware_layers = route.function_middlewares
+            .iter()
+            .rev()
+            .map(|middleware| quote! { #middleware })
+            .collect::<Vec<_>>();
+
+        quote! {
+            let mut __function_router = ::summer_web::Router::new();
+            let __method_router = ::summer_web::MethodRouter::new();
+            #(let __method_router = ::summer_web::MethodRouter::on(__method_router, #methods, #func_name);)*
+            let __method_router = ::summer_web::ApiMethodRouter::from(__method_router);
+            __function_router = ::summer_web::Router::api_route(__function_router, #path, __method_router);
+            let __transform = ::summer_web::default_transform;
+            #(#operation_binder)*
+
+            #(let __function_router = __function_router.layer(#function_middleware_layers);)*
+
             __module_router = __module_router.merge(__function_router);
         }
     }
@@ -386,19 +561,124 @@ fn remove_processed_attributes(attrs: &mut Vec<syn::Attribute>) {
 }
 
 fn generate_function_route_registration(
-    route: &RouteInfo, 
-    func_name: &syn::Ident, 
+    route: &RouteInfo,
+    func_name: &syn::Ident,
+    middleware_expressions: &[TokenStream2]
+) -> TokenStream2 {
+    if route.is_openapi {
+        generate_function_openapi_route_registration(route, func_name, middleware_expressions)
+    } else {
+        generate_function_plain_route_registration(route, func_name, middleware_expressions)
+    }
+}
+
+fn generate_function_plain_route_registration(
+    route: &RouteInfo,
+    func_name: &syn::Ident,
     middleware_expressions: &[TokenStream2]
 ) -> TokenStream2 {
     let path = &route.path;
     let methods = generate_method_filters(&route.methods);
-    
-    quote! { 
+
+    quote! {
         let mut __method_router = ::summer_web::MethodRouter::new();
         #(let __method_router = ::summer_web::MethodRouter::on(__method_router, #methods, #func_name);)*
-        
+
         #(let __method_router = __method_router.layer(#middleware_expressions);)*
-        
+
         __router = ::summer_web::Router::route(__router, #path, __method_router);
+    }
+}
+
+fn generate_function_openapi_route_registration(
+    route: &RouteInfo,
+    func_name: &syn::Ident,
+    middleware_expressions: &[TokenStream2]
+) -> TokenStream2 {
+    let path = &route.path;
+    let methods = generate_method_filters(&route.methods);
+    let fn_name_str = func_name.to_string();
+
+    let operation = crate::route::openapi::parse_doc_attributes(&route.doc_attributes, &fn_name_str);
+    let status_codes = &operation.status_codes;
+
+    let status_code_gen = if !status_codes.is_empty() {
+        let registrations = status_codes.iter().map(|variant_path| {
+            let path_parts: Vec<&str> = variant_path.split("::").collect();
+            if path_parts.len() < 2 {
+                panic!("Invalid status_codes format: {}. Expected format: TypeName::VariantName", variant_path);
+            }
+            let type_path_parts = &path_parts[..path_parts.len() - 1];
+            let type_path_str = type_path_parts.join("::");
+            let type_path = syn::parse_str::<syn::Path>(&type_path_str)
+                .unwrap_or_else(|_| panic!("Invalid type path: {}", type_path_str));
+            quote! {
+                {
+                    ::summer_web::openapi::register_error_response_by_variant::<#type_path>(
+                        ctx,
+                        &mut __operation,
+                        #variant_path
+                    );
+                }
+            }
+        });
+        quote! { #(#registrations)* }
+    } else {
+        quote! {}
+    };
+
+    let (input_types_gen, output_gen) = if let Some(ast) = &route.fn_ast {
+        let (input_tys, output_ty) = crate::utils::extract_fn_types(ast);
+        let input_gen = if input_tys.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                #(
+                    <#input_tys as ::summer_web::aide::OperationInput>::operation_input(ctx, &mut __operation);
+                )*
+            }
+        };
+        let out_gen = if let Some(ty) = output_ty {
+            quote! {
+                for (code, res) in <#ty as ::summer_web::aide::OperationOutput>::inferred_responses(ctx, &mut __operation) {
+                    ::summer_web::openapi::set_inferred_response(ctx, &mut __operation, code, res);
+                }
+            }
+        } else {
+            quote! {}
+        };
+        (input_gen, out_gen)
+    } else {
+        (quote! {}, quote! {})
+    };
+
+    let method_lowercase_strs: Vec<String> = route.methods.iter().map(|m| m.to_lowercase()).collect();
+
+    let operation_binder = method_lowercase_strs.iter().map(|method_str| {
+        quote! {
+            let mut __operation = #operation;
+            ::summer_web::aide::generate::in_context(|ctx| {
+                #input_types_gen
+                #output_gen
+                #status_code_gen
+            });
+            __router = __router.api_route_docs_with(
+                #path,
+                ::summer_web::aide::axum::routing::ApiMethodDocs::new(#method_str, __operation),
+                __transform,
+            );
+        }
+    });
+
+    quote! {
+        let mut __method_router = ::summer_web::MethodRouter::new();
+        #(let __method_router = ::summer_web::MethodRouter::on(__method_router, #methods, #func_name);)*
+
+        #(let __method_router = __method_router.layer(#middleware_expressions);)*
+
+        let __method_router = ::summer_web::ApiMethodRouter::from(__method_router);
+        __router = ::summer_web::Router::api_route(__router, #path, __method_router);
+        let __transform = ::summer_web::default_transform;
+        #(#operation_binder)*
     }
 }

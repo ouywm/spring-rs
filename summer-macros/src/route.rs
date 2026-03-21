@@ -1,4 +1,4 @@
-mod openapi;
+pub(crate) mod openapi;
 
 use crate::{input_and_compile_error, utils};
 use proc_macro::TokenStream;
