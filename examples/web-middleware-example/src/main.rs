@@ -1,4 +1,5 @@
 use anyhow::Context;
+use serde::Serialize;
 use summer::{auto_config, App};
 use summer_sqlx::sqlx::Row;
 use summer_sqlx::{sqlx, ConnectPool, SqlxPlugin};
@@ -10,6 +11,7 @@ use summer_web::{
         body,
         middleware::{self, Next},
         response::{IntoResponse, Response},
+        Json,
     },
     error::Result,
     extractor::Component,
@@ -199,4 +201,55 @@ async fn another_route() -> impl IntoResponse {
 #[get("/goodbye")]
 async fn goodbye_world() -> impl IntoResponse {
     "goodbye world"
+}
+
+/// Example #6:
+/// Demonstrates that `#[middlewares]` works with OpenAPI macros (`#[get_api]`).
+/// This was previously broken (issue #187) - `get_api` was silently ignored
+/// inside `#[middlewares]` modules.
+
+#[derive(Serialize, schemars::JsonSchema)]
+struct HealthStatus {
+    status: String,
+    uptime: u64,
+}
+
+#[middlewares(
+    middleware::from_fn(logging_middleware),
+    TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(10))
+)]
+mod openapi_with_middleware {
+    use summer_web::axum::http::StatusCode;
+
+    use super::*;
+
+    /// Health check endpoint
+    /// @tag system
+    #[get_api("/health")]
+    pub async fn health() -> Json<HealthStatus> {
+        Json(HealthStatus {
+            status: "ok".to_string(),
+            uptime: 42,
+        })
+    }
+
+    /// Plain route inside same middleware module
+    #[get("/ping")]
+    pub async fn ping() -> impl IntoResponse {
+        "pong"
+    }
+}
+
+/// Example #7:
+/// Function-level `#[middlewares]` with `#[get_api]`.
+
+/// System info endpoint
+/// @tag system
+#[middlewares(middleware::from_fn(logging_middleware))]
+#[get_api("/system-info")]
+async fn system_info() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "name": "web-middleware-example",
+        "version": "0.5.0"
+    }))
 }
