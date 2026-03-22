@@ -160,19 +160,19 @@ async fn fetch_user_info(user_id: i64) -> Result<UserInfo, ApiErrors> {
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct CreateUserRequest {
-    #[validate(length(min = 1, max = 100))]
+    #[validate(length(min = 1, max = 100, message = "name must be between 1 and 100 characters"))]
     pub name: String,
-    #[validate(email)]
+    #[validate(email(message = "must be a valid email address"))]
     pub email: String,
-    #[validate(range(min = 0, max = 150))]
+    #[validate(range(min = 0, max = 150, message = "age must be between 0 and 150"))]
     pub age: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Validate)]
 pub struct ListUsersQuery {
-    #[validate(range(min = 1))]
+    #[validate(range(min = 1, message = "page must be at least 1"))]
     pub page: Option<i32>,
-    #[validate(range(min = 1, max = 100))]
+    #[validate(range(min = 1, max = 100, message = "size must be between 1 and 100"))]
     pub size: Option<i32>,
 }
 
