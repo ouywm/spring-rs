@@ -165,7 +165,7 @@ fn validation_errors_to_problem(
 ) -> ProblemDetails {
     let mut violations = Vec::new();
     collect_violations(errors, &location, "", &mut violations);
-    ProblemDetails::validation_error_with_violations(violations)
+    ProblemDetails::validation_error(violations)
 }
 
 fn collect_violations(
@@ -270,25 +270,25 @@ fn json_rejection_to_problem(rejection: JsonRejection) -> ProblemDetails {
 
             if !field.is_empty() && field != "." {
                 let friendly = humanize_serde_message(detail);
-                ProblemDetails::validation_error_with_violations(vec![
+                ProblemDetails::validation_error(vec![
                     Violation::body(field, friendly),
                 ])
             } else if let Some(name) = extract_backtick_value(stripped, "missing field `") {
-                ProblemDetails::validation_error_with_violations(vec![
+                ProblemDetails::validation_error(vec![
                     Violation::body(name, "this field is required"),
                 ])
             } else {
-                ProblemDetails::validation_error(humanize_serde_message(stripped))
+                ProblemDetails::validation_error_simple(humanize_serde_message(stripped))
             }
         }
         JsonRejection::JsonSyntaxError(_) => {
-            ProblemDetails::validation_error("request body is not valid JSON")
+            ProblemDetails::validation_error_simple("request body is not valid JSON")
         }
         JsonRejection::MissingJsonContentType(_) => {
-            ProblemDetails::new("about:blank", "Unsupported Media Type", 415)
+            ProblemDetails::new(415)
                 .with_detail("expected Content-Type: application/json")
         }
-        _ => ProblemDetails::validation_error("failed to read request body"),
+        _ => ProblemDetails::validation_error_simple("failed to read request body"),
     }
 }
 
@@ -299,18 +299,18 @@ fn query_rejection_to_problem(rejection: QueryRejection) -> ProblemDetails {
         .unwrap_or(&msg);
 
     if let Some(name) = extract_backtick_value(stripped, "missing field `") {
-        ProblemDetails::validation_error_with_violations(vec![
+        ProblemDetails::validation_error(vec![
             Violation::query(name, "this query parameter is required"),
         ])
     } else {
         // Format: "page: invalid digit found in string"
         let (field, detail) = split_field_message(stripped);
         if !field.is_empty() {
-            ProblemDetails::validation_error_with_violations(vec![
+            ProblemDetails::validation_error(vec![
                 Violation::query(field, humanize_serde_message(detail)),
             ])
         } else {
-            ProblemDetails::validation_error_with_violations(vec![
+            ProblemDetails::validation_error(vec![
                 Violation::query("query", humanize_serde_message(stripped)),
             ])
         }
@@ -323,11 +323,11 @@ fn path_rejection_to_problem(rejection: PathRejection) -> ProblemDetails {
     // axum 0.8 format: "Invalid URL: Cannot parse `id` with value `abc` to a `u32`"
     if let Some(name) = extract_backtick_value(&msg, "Cannot parse `") {
         let expected = extract_backtick_value(&msg, "to a `").unwrap_or("valid value");
-        ProblemDetails::validation_error_with_violations(vec![
+        ProblemDetails::validation_error(vec![
             Violation::path(name, format!("must be a valid {expected}")),
         ])
     } else {
-        ProblemDetails::validation_error_with_violations(vec![
+        ProblemDetails::validation_error(vec![
             Violation::path("path", "invalid path parameter"),
         ])
     }

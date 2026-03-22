@@ -230,7 +230,7 @@ async fn test_problem_details_with_violations_response() {
     use tower::ServiceExt;
 
     async fn validate_handler() -> impl IntoResponse {
-        ProblemDetails::validation_error_with_violations(vec![
+        ProblemDetails::validation_error(vec![
             Violation::body("name", "must not be null"),
             Violation::new("page", ViolationLocation::Query, "must be positive"),
         ])

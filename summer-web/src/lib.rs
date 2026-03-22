@@ -16,8 +16,14 @@ pub mod middleware;
 pub mod openapi;
 /// RFC 7807 Problem Details for HTTP APIs
 pub mod problem_details;
+/// Validation extractors (axum-valid integration)
+#[cfg(feature = "validator")]
+pub mod validation;
 
 pub use summer_macros::ProblemDetails;
+
+#[cfg(feature = "validator")]
+pub use axum_valid::Valid;
 
 #[cfg(feature = "socket_io")]
 pub use { socketioxide, rmpv };

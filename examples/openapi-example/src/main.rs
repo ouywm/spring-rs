@@ -1,7 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use summer::{auto_config, App};
-use summer_sqlx::SqlxPlugin;
 use summer_web::axum::Json;
 use summer_web::extractor::Path;
 use summer_web::{get_api, post_api};
@@ -18,7 +17,6 @@ use validation::{JsonWithProblem, ValidatedJson, ValidatedQuery, ValidatedPath};
 #[tokio::main]
 async fn main() {
     App::new()
-        // .add_plugin(SqlxPlugin)
         .add_plugin(WebPlugin)
         .run()
         .await;
@@ -293,11 +291,9 @@ async fn extension_example(
 ) -> Result<Json<serde_json::Value>, ProblemDetails> {
     match code.as_str() {
         "rate-limit" => Err(
-            ProblemDetails::new(
-                "https://api.example.com/problems/rate-limit-exceeded",
-                "Rate Limit Exceeded",
-                429,
-            )
+            ProblemDetails::new(429)
+            .with_type("https://api.example.com/problems/rate-limit-exceeded")
+            .with_title("Rate Limit Exceeded")
             .with_detail("You have sent too many requests in a given amount of time")
             .with_extension("retryAfter", serde_json::json!(30))
             .with_extension("limit", serde_json::json!(100))
@@ -305,11 +301,9 @@ async fn extension_example(
             .with_extension("resetAt", serde_json::json!("2026-03-22T12:00:00Z")),
         ),
         "payment" => Err(
-            ProblemDetails::new(
-                "https://api.example.com/problems/insufficient-balance",
-                "Insufficient Balance",
-                402,
-            )
+            ProblemDetails::new(402)
+            .with_type("https://api.example.com/problems/insufficient-balance")
+            .with_title("Insufficient Balance")
             .with_detail("Your account balance is insufficient for this transaction")
             .with_extension("balance", serde_json::json!(50.00))
             .with_extension("required", serde_json::json!(99.99))
@@ -317,11 +311,9 @@ async fn extension_example(
             .with_extension("accountId", serde_json::json!("acc_12345")),
         ),
         "trace" => Err(
-            ProblemDetails::new(
-                "https://api.example.com/problems/internal-error",
-                "Internal Server Error",
-                500,
-            )
+            ProblemDetails::new(500)
+            .with_type("https://api.example.com/problems/internal-error")
+            .with_title("Internal Server Error")
             .with_detail("An unexpected error occurred while processing your request")
             .with_extension("traceId", serde_json::json!("abc-123-def-456"))
             .with_extension("timestamp", serde_json::json!("2026-03-22T10:30:00Z"))
