@@ -232,6 +232,71 @@ fn test_web_configurator() {
     assert!(app.has_component::<summer_web::Routers>());
 }
 
+#[cfg(all(feature = "socket_io", not(feature = "openapi")))]
+mod test_socketio_routes {
+    use summer::app::AppBuilder;
+    use summer_web::axum::body::Body;
+    use summer_web::axum::http::{Request, StatusCode};
+    use summer_web::config::SocketIOConfig;
+    use summer_web::{enable_socketio, Router};
+    use tower::ServiceExt;
+
+    fn build_router(request_path: &str) -> Router {
+        let mut app = AppBuilder::default();
+        enable_socketio(
+            SocketIOConfig {
+                default_namespace: "/".to_string(),
+                request_path: request_path.to_string(),
+            },
+            &mut app,
+            Router::new(),
+        )
+    }
+
+    async fn handshake_status(router: Router, uri: &str) -> StatusCode {
+        router
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn test_socketio_handshake_without_trailing_slash() {
+        let router = build_router("/socket.io");
+        let status = handshake_status(router, "/socket.io?EIO=4&transport=polling").await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_socketio_handshake_with_trailing_slash() {
+        let router = build_router("/socket.io");
+        let status = handshake_status(router, "/socket.io/?EIO=4&transport=polling").await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_socketio_handshake_under_global_prefix_without_trailing_slash() {
+        let router = summer_web::axum::Router::new().nest("/api", build_router("/socket.io"));
+        let status = handshake_status(router, "/api/socket.io?EIO=4&transport=polling").await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_socketio_handshake_under_global_prefix_with_trailing_slash() {
+        let router = summer_web::axum::Router::new().nest("/api", build_router("/socket.io"));
+        let status = handshake_status(router, "/api/socket.io/?EIO=4&transport=polling").await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_socketio_request_path_is_normalized() {
+        let router = build_router("socket.io/");
+        let status = handshake_status(router, "/socket.io/?EIO=4&transport=polling").await;
+        assert_eq!(status, StatusCode::OK);
+    }
+}
+
 #[cfg(test)]
 #[cfg(feature = "openapi")]
 mod test_problem_details_macro {

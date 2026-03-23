@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
-use summer::config::Configurable;
 use std::net::{IpAddr, Ipv4Addr};
+use summer::config::Configurable;
 use tracing::Level;
 
 summer::submit_config_schema!("web", WebConfig);
@@ -221,14 +221,61 @@ fn default_fallback() -> String {
 
 /// SocketIO configuration
 #[cfg(feature = "socket_io")]
-#[derive(Debug, Configurable, JsonSchema, Deserialize)]
+#[derive(Debug, Configurable, JsonSchema, Deserialize, Clone)]
 #[config_prefix = "socket_io"]
 pub struct SocketIOConfig {
     #[serde(default = "default_namespace")]
     pub default_namespace: String,
+    #[serde(default = "default_request_path")]
+    pub request_path: String,
+}
+
+#[cfg(feature = "socket_io")]
+impl SocketIOConfig {
+    pub(crate) fn normalize(&mut self) {
+        normalize_socket_namespace(&mut self.default_namespace);
+        normalize_socket_path(&mut self.request_path);
+    }
 }
 
 #[cfg(feature = "socket_io")]
 fn default_namespace() -> String {
     "/".to_string()
+}
+
+#[cfg(feature = "socket_io")]
+fn default_request_path() -> String {
+    "/socket.io".to_string()
+}
+
+#[cfg(feature = "socket_io")]
+fn normalize_socket_namespace(namespace: &mut String) {
+    if namespace.is_empty() {
+        *namespace = default_namespace();
+        return;
+    }
+
+    if !namespace.starts_with('/') {
+        namespace.insert(0, '/');
+    }
+
+    while namespace.len() > 1 && namespace.ends_with('/') {
+        namespace.pop();
+    }
+}
+
+#[cfg(feature = "socket_io")]
+fn normalize_socket_path(path: &mut String) {
+    if path.is_empty() {
+        *path = default_request_path();
+        return;
+    }
+
+    if !path.starts_with('/') {
+        path.insert(0, '/');
+    }
+
+    while path.len() > 1 && path.ends_with('/') {
+        path.pop();
+    }
 }

@@ -314,8 +314,7 @@ impl WebPlugin {
         if !config.global_prefix.is_empty() {
             router = axum::Router::new().nest(&config.global_prefix, router)
         };
-
-
+        
         tracing::info!("axum server started");
         if config.connect_info {
             // with client connect info
@@ -354,24 +353,49 @@ pub fn enable_openapi() {
 }
 
 #[cfg(feature = "socket_io")]
-pub fn enable_socketio(socketio_config: SocketIOConfig, app: &mut AppBuilder, router: Router) -> Router {
-    tracing::info!("Configuring SocketIO with namespace: {}", socketio_config.default_namespace);
-    
-    let (layer, io) = socketioxide::SocketIo::builder()
-        .build_layer();
-    
+pub fn enable_socketio(
+    socketio_config: SocketIOConfig,
+    app: &mut AppBuilder,
+    router: Router,
+) -> Router {
+    let mut socketio_config = socketio_config;
+    socketio_config.normalize();
+
+    tracing::info!(
+        "Configuring SocketIO with namespace: {} and request path: {}",
+        socketio_config.default_namespace,
+        socketio_config.request_path,
+    );
+
+    let request_path = socketio_config.request_path.clone();
+    let request_path_with_slash = if request_path == "/" {
+        None
+    } else {
+        Some(format!("{request_path}/"))
+    };
+
+    let (svc, io) = socketioxide::SocketIo::builder()
+        .req_path(request_path.clone())
+        .build_svc();
+
     let ns_path = socketio_config.default_namespace.clone();
     let ns_path_for_closure = ns_path.clone();
     io.ns(ns_path, move |socket: socketioxide::extract::SocketRef| async move {
         use summer::tracing::info;
-        
+
         info!(socket_id = ?socket.id, "New socket connected to namespace: {}", ns_path_for_closure);
-        
+
         crate::handler::auto_socketio_setup(&socket);
     });
-    
+
     app.add_component(io);
-    router.layer(layer)
+
+    let router = router.route_service(&request_path, svc.clone());
+    if let Some(request_path_with_slash) = request_path_with_slash {
+        router.route_service(&request_path_with_slash, svc)
+    } else {
+        router
+    }
 }
 
 #[cfg(feature = "openapi")]
@@ -381,7 +405,10 @@ fn finish_openapi(
     openapi_conf: OpenApiConfig,
     global_prefix: &str,
 ) -> axum::Router {
-    let router = router.nest_api_service(&openapi_conf.doc_prefix, docs_routes(&openapi_conf, global_prefix));
+    let router = router.nest_api_service(
+        &openapi_conf.doc_prefix,
+        docs_routes(&openapi_conf, global_prefix),
+    );
 
     let mut api = app.get_component::<OpenApi>().unwrap_or_else(|| OpenApi {
         info: openapi_conf.info,
