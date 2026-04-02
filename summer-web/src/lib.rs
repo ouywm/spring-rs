@@ -16,13 +16,19 @@ pub mod middleware;
 pub mod openapi;
 /// RFC 7807 Problem Details for HTTP APIs
 pub mod problem_details;
-/// Validation extractors (axum-valid integration)
-#[cfg(feature = "validator")]
+/// Validation extractors (garde and validator, with optional axum-valid compatibility)
+#[cfg(any(feature = "garde", feature = "validator"))]
 pub mod validation;
 
 pub use summer_macros::ProblemDetails;
-
+#[cfg(feature = "garde")]
+pub use summer_macros::GardeSchema;
 #[cfg(feature = "validator")]
+pub use summer_macros::ValidatorSchema;
+
+#[cfg(all(feature = "axum-valid", feature = "garde"))]
+pub use axum_valid::Garde;
+#[cfg(all(feature = "axum-valid", feature = "validator"))]
 pub use axum_valid::Valid;
 
 #[cfg(feature = "socket_io")]
@@ -271,7 +277,7 @@ impl Plugin for WebPlugin {
 
         #[cfg(feature = "socket_io")]
         if let Some(socketio_config) = socketio_config {
-            router =  enable_socketio(socketio_config, app, router);
+            router = enable_socketio(socketio_config, app, router);
         }
 
         app.add_component(router);
@@ -320,7 +326,6 @@ impl WebPlugin {
         if !config.global_prefix.is_empty() {
             router = axum::Router::new().nest(&config.global_prefix, router)
         };
-
 
         tracing::info!("axum server started");
         if config.connect_info {

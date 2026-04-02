@@ -589,6 +589,30 @@ mod validator_support {
     }
 }
 
+#[cfg(feature = "garde")]
+impl ProblemDetails {
+    /// Convert `garde::Report` into a `ProblemDetails` with violations.
+    ///
+    /// `garde::Report` is a flat collection of `(Path, Error)` pairs,
+    /// where `Path` already contains the full dotted/indexed field path
+    /// (e.g. `"items[0].name"`), and `Error` carries the message.
+    pub fn from_garde_report(report: &garde::Report, location: ViolationLocation) -> Self {
+        let violations: Vec<Violation> = report
+            .iter()
+            .map(|(path, error)| {
+                let field = path.to_string();
+                let field = if field.is_empty() {
+                    "__all__".to_string()
+                } else {
+                    field
+                };
+                Violation::new(field, location.clone(), error.to_string())
+            })
+            .collect();
+        Self::validation_error(violations)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
