@@ -9,7 +9,7 @@
 summer-web = { version = "<version>" }
 ```
 
-可选的**features**: 
+可选的**features**:
 * `http2`: http2
 * `multipart`: 文件上传
 * `ws`: websocket
@@ -18,6 +18,9 @@ summer-web = { version = "<version>" }
 * `openapi-redoc`: redoc文档界面
 * `openapi-scalar`: scalar文档界面
 * `openapi-swagger`: swagger文档界面
+* `validator`: validator 验证提取器（独立使用，不依赖 axum-valid）
+* `garde`: garde 验证提取器（独立使用，支持自定义 Context）
+* `axum-valid`: axum-valid 兼容层（可与 validator/garde 组合使用）
 
 ## 配置项
 
@@ -292,3 +295,148 @@ pub struct CustomErrorSchema {
     pub message: String,
 }
 ```
+
+# 验证支持
+
+summer-web 提供了两套验证框架的集成，两者都能将验证失败转换为 ProblemDetails 响应。
+
+## Feature 组合
+
+```toml
+# 仅使用 validator（自建提取器，不依赖 axum-valid）
+summer-web = { version = "<version>", features = ["validator"] }
+
+# 仅使用 garde（自建提取器，支持自定义 Context）
+summer-web = { version = "<version>", features = ["garde"] }
+
+# 两者同时使用
+summer-web = { version = "<version>", features = ["validator", "garde"] }
+
+# 额外兼容 axum-valid（可选）
+summer-web = { version = "<version>", features = ["validator", "garde", "axum-valid"] }
+```
+
+## Validator 验证
+
+使用 `ValidatorJson`、`ValidatorQuery`、`ValidatorPath`、`ValidatorForm` 提取器：
+
+```rust,ignore
+use summer_web::validation::validator::{ValidatorJson, ValidatorQuery};
+use validator::Validate;
+
+#[derive(Debug, Deserialize, summer_web::ValidatorSchema, Validate)]
+pub struct CreateUserRequest {
+    #[validate(length(min = 1, max = 100, message = "名称长度必须在1到100之间"))]
+    pub name: String,
+    #[validate(email(message = "必须是有效的邮箱地址"))]
+    pub email: String,
+    #[validate(range(min = 0, max = 150))]
+    pub age: Option<i32>,
+}
+
+#[post_api("/users")]
+async fn create_user(
+    ValidatorJson(body): ValidatorJson<CreateUserRequest>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "name": body.name, "email": body.email }))
+}
+```
+
+验证失败时返回：
+
+```json
+{
+  "type": "about:blank",
+  "title": "Validation Error",
+  "status": 422,
+  "violations": [
+    { "field": "email", "message": "必须是有效的邮箱地址", "in": "body" }
+  ]
+}
+```
+
+## Garde 验证
+
+使用 `GardeJson`、`GardeQuery`、`GardePath`、`GardeForm` 提取器：
+
+```rust,ignore
+use summer_web::validation::garde::{GardeJson, GardeQuery};
+
+// 场景 A：Context = ()，零配置
+#[derive(Debug, Deserialize, summer_web::GardeSchema, garde::Validate)]
+pub struct CreateUserRequest {
+    #[garde(length(min = 1, max = 100))]
+    pub name: String,
+    #[garde(email)]
+    pub email: String,
+}
+
+#[post_api("/users")]
+async fn create_user(
+    GardeJson(body): GardeJson<CreateUserRequest>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "name": body.name, "email": body.email }))
+}
+```
+
+### Garde 自定义 Context
+
+当验证规则需要运行时配置时，使用 `ValidationContextRegistry`：
+
+```rust,ignore
+use summer_web::validation::context::ValidationContextRegistry;
+
+#[derive(Clone, Debug)]
+pub struct UserRules {
+    pub min_name: usize,
+    pub max_name: usize,
+}
+
+// 通过 #[component] 注册验证上下文
+#[summer::component]
+fn create_validation_contexts() -> ValidationContextRegistry {
+    let mut registry = ValidationContextRegistry::new();
+    registry.insert(UserRules { min_name: 2, max_name: 50 });
+    registry
+}
+
+// 使用 GardeSchema 替代 JsonSchema（解决 context 表达式冲突）
+#[derive(Debug, Deserialize, garde::Validate, summer_web::GardeSchema)]
+#[garde(context(UserRules as ctx))]
+pub struct CreateUserRequest {
+    #[garde(length(min = ctx.min_name, max = ctx.max_name))]
+    pub name: String,
+    #[garde(email)]
+    pub email: String,
+}
+```
+
+## OpenAPI 约束注入
+
+`ValidatorSchema` 和 `GardeSchema` 宏会自动将验证属性中的字面量值注入到 JSON Schema 中，
+使 OpenAPI 文档包含 `minLength`、`maximum`、`format` 等约束信息：
+
+```rust,ignore
+// 使用 ValidatorSchema（替代 JsonSchema）
+#[derive(Deserialize, summer_web::ValidatorSchema, Validate)]
+pub struct Foo {
+    #[validate(length(min = 1, max = 100))]
+    pub name: String,        // → OpenAPI: {"type": "string", "minLength": 1, "maxLength": 100}
+    #[validate(email)]
+    pub email: String,       // → OpenAPI: {"type": "string", "format": "email"}
+}
+
+// 使用 GardeSchema（替代 JsonSchema）
+#[derive(Deserialize, summer_web::GardeSchema, garde::Validate)]
+pub struct Bar {
+    #[garde(length(min = 1, max = 100))]
+    pub name: String,        // → OpenAPI: {"type": "string", "minLength": 1, "maxLength": 100}
+    #[garde(email)]
+    pub email: String,       // → OpenAPI: {"type": "string", "format": "email"}
+}
+```
+
+> **注意**：如果不需要 OpenAPI 约束注入，也可以直接使用 `#[derive(JsonSchema)]`，
+> 但生成的 schema 中不会包含 minLength、maximum 等验证信息。
+
+完整代码参考 [`openapi-example`](https://github.com/summer-rs/summer-rs/tree/master/examples/openapi-example)

@@ -18,6 +18,9 @@ optional **features**:
 * `openapi-redoc`: Redoc documentation interface
 * `openapi-scalar`: Scalar documentation interface
 * `openapi-swagger`: Swagger documentation interface
+* `validator`: validator extractors (standalone, no axum-valid dependency)
+* `garde`: garde extractors (standalone, with custom Context support)
+* `axum-valid`: axum-valid compatibility layer (optional, combinable with validator/garde)
 
 ## Configuration items
 
@@ -553,4 +556,142 @@ This will automatically generate responses with the request URI:
   "instance": "/users/999"
 }
 ```
+
+# Validation Support
+
+summer-web provides integration with two validation frameworks. Both convert validation failures into ProblemDetails responses.
+
+## Feature Combinations
+
+```toml
+# Validator only (standalone extractors, no axum-valid dependency)
+summer-web = { version = "<version>", features = ["validator"] }
+
+# Garde only (standalone extractors, with custom Context support)
+summer-web = { version = "<version>", features = ["garde"] }
+
+# Both
+summer-web = { version = "<version>", features = ["validator", "garde"] }
+
+# With axum-valid compatibility (optional)
+summer-web = { version = "<version>", features = ["validator", "garde", "axum-valid"] }
+```
+
+## Validator
+
+Use `ValidatorJson`, `ValidatorQuery`, `ValidatorPath`, `ValidatorForm` extractors:
+
+```rust,ignore
+use summer_web::validation::validator::{ValidatorJson, ValidatorQuery};
+use validator::Validate;
+
+#[derive(Debug, Deserialize, summer_web::ValidatorSchema, Validate)]
+pub struct CreateUserRequest {
+    #[validate(length(min = 1, max = 100))]
+    pub name: String,
+    #[validate(email)]
+    pub email: String,
+    #[validate(range(min = 0, max = 150))]
+    pub age: Option<i32>,
+}
+
+#[post_api("/users")]
+async fn create_user(
+    ValidatorJson(body): ValidatorJson<CreateUserRequest>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "name": body.name, "email": body.email }))
+}
+```
+
+Validation failures return:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Validation Error",
+  "status": 422,
+  "violations": [
+    { "field": "email", "message": "must be a valid email address", "in": "body" }
+  ]
+}
+```
+
+## Garde
+
+Use `GardeJson`, `GardeQuery`, `GardePath`, `GardeForm` extractors:
+
+```rust,ignore
+use summer_web::validation::garde::{GardeJson, GardeQuery};
+
+// Scenario A: Context = (), zero-config
+#[derive(Debug, Deserialize, summer_web::GardeSchema, garde::Validate)]
+pub struct CreateUserRequest {
+    #[garde(length(min = 1, max = 100))]
+    pub name: String,
+    #[garde(email)]
+    pub email: String,
+}
+```
+
+### Garde Custom Context
+
+When validation rules need runtime configuration, use `ValidationContextRegistry`:
+
+```rust,ignore
+use summer_web::validation::context::ValidationContextRegistry;
+
+#[derive(Clone, Debug)]
+pub struct UserRules {
+    pub min_name: usize,
+    pub max_name: usize,
+}
+
+// Register via #[component]
+#[summer::component]
+fn create_validation_contexts() -> ValidationContextRegistry {
+    let mut registry = ValidationContextRegistry::new();
+    registry.insert(UserRules { min_name: 2, max_name: 50 });
+    registry
+}
+
+// Use GardeSchema instead of JsonSchema (resolves context expression conflict)
+#[derive(Debug, Deserialize, garde::Validate, summer_web::GardeSchema)]
+#[garde(context(UserRules as ctx))]
+pub struct CreateUserRequest {
+    #[garde(length(min = ctx.min_name, max = ctx.max_name))]
+    pub name: String,
+    #[garde(email)]
+    pub email: String,
+}
+```
+
+## OpenAPI Constraint Injection
+
+`ValidatorSchema` and `GardeSchema` macros automatically inject literal values from validation
+attributes into JSON Schema, so OpenAPI documentation includes `minLength`, `maximum`, `format`, etc.:
+
+```rust,ignore
+// Use ValidatorSchema (replaces JsonSchema)
+#[derive(Deserialize, summer_web::ValidatorSchema, Validate)]
+pub struct Foo {
+    #[validate(length(min = 1, max = 100))]
+    pub name: String,        // → OpenAPI: {"type": "string", "minLength": 1, "maxLength": 100}
+    #[validate(email)]
+    pub email: String,       // → OpenAPI: {"type": "string", "format": "email"}
+}
+
+// Use GardeSchema (replaces JsonSchema)
+#[derive(Deserialize, summer_web::GardeSchema, garde::Validate)]
+pub struct Bar {
+    #[garde(length(min = 1, max = 100))]
+    pub name: String,        // → OpenAPI: {"type": "string", "minLength": 1, "maxLength": 100}
+    #[garde(email)]
+    pub email: String,       // → OpenAPI: {"type": "string", "format": "email"}
+}
+```
+
+> **Note**: You can also use `#[derive(JsonSchema)]` directly if you don't need OpenAPI constraint
+> injection, but the generated schema will not include minLength, maximum, etc.
+
+Full code reference: [`openapi-example`](https://github.com/summer-rs/summer-rs/tree/master/examples/openapi-example)
 
