@@ -9,6 +9,9 @@ authors.workspace = true
 summer = { path = "../../summer" }
 summer-web = { path = "../../summer-web", features = [
     "openapi",
+    "validator",
+    "garde",
+    "axum-valid",
     # "openapi-swagger",
     # "openapi-redoc",
     "openapi-scalar",
@@ -19,6 +22,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 thiserror = { workspace = true }
-validator = { workspace = true }
+validator = { workspace = true, features = ["derive"] }
+garde = { workspace = true, features = ["derive"] }
 summer-sqlx = { path = "../../summer-sqlx", features = ["postgres"] }
 tracing = { workspace = true }
