@@ -16,6 +16,8 @@ mod route;
 mod socketioxide;
 mod stream;
 mod utils;
+#[cfg(any(feature = "garde", feature = "validator"))]
+mod validation_schema;
 
 #[cfg(feature = "sa-token")]
 mod sa_token;
@@ -626,6 +628,62 @@ pub fn derive_problem_details(input: TokenStream) -> TokenStream {
     problem_details::expand_derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// `#[derive(GardeSchema)]` — auto-generate `JsonSchema` impl for
+/// garde-validated structs.
+///
+/// Solves the conflict between `#[derive(JsonSchema)]` and garde context
+/// expressions like `#[garde(length(min = ctx.field))]`. Use this instead
+/// of `#[derive(JsonSchema)]` when your struct has `#[garde(context(...))]`.
+///
+/// When garde attributes contain literal values (e.g. `min = 1`), the macro
+/// also injects JSON Schema validation keywords (`minLength`, `maximum`, etc.)
+/// into the generated schema for OpenAPI documentation.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// #[derive(Debug, Deserialize, garde::Validate, GardeSchema)]
+/// #[garde(context(UserRules as ctx))]
+/// pub struct CreateUserRequest {
+///     #[garde(length(min = ctx.min_name, max = ctx.max_name))]
+///     pub name: String,
+///     #[garde(email)]
+///     pub email: String,
+///     #[garde(range(min = ctx.min_age, max = ctx.max_age))]
+///     pub age: Option<i32>,  // Option fields are not required in schema
+/// }
+/// ```
+#[cfg(feature = "garde")]
+#[proc_macro_derive(GardeSchema)]
+pub fn derive_garde_schema(input: TokenStream) -> TokenStream {
+    validation_schema::expand_garde(input)
+}
+
+/// `#[derive(ValidatorSchema)]` — auto-generate `JsonSchema` impl for
+/// validator-validated structs, with OpenAPI constraint injection.
+///
+/// Reads `#[validate(...)]` attributes and generates JSON Schema validation
+/// keywords (`minLength`, `maximum`, `format`, etc.) in the schema.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// #[derive(Debug, Deserialize, ValidatorSchema, validator::Validate)]
+/// pub struct CreateUserRequest {
+///     #[validate(length(min = 1, max = 100))]
+///     pub name: String,
+///     #[validate(email)]
+///     pub email: String,
+///     #[validate(range(min = 0, max = 150))]
+///     pub age: Option<i32>,
+/// }
+/// ```
+#[cfg(feature = "validator")]
+#[proc_macro_derive(ValidatorSchema)]
+pub fn derive_validator_schema(input: TokenStream) -> TokenStream {
+    validation_schema::expand_validator(input)
 }
 
 /// `#[cache]` - Transparent Redis-based caching for async functions.
