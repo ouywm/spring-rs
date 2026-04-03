@@ -14,8 +14,10 @@ proc-macro = true
 
 [features]
 socket_io = ["summer-web/socket_io"]
-garde = []
-validator = []
+garde = ["garde-schema"]
+garde-schema = []
+validator = ["validator-schema"]
+validator-schema = []
 sa-token = []
 
 [dependencies]

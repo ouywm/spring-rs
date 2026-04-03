@@ -12,6 +12,7 @@ summer-web = { path = "../../summer-web", features = [
     "validator",
     "garde",
     "axum-valid",
+    "typed-header",
     # "openapi-swagger",
     # "openapi-redoc",
     "openapi-scalar",

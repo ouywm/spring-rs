@@ -5,7 +5,10 @@
 
 use serde::Deserialize;
 use summer_web::axum::Json;
-use summer_web::validation::garde::{GardeForm, GardeJson, GardePath, GardeQuery};
+use summer_web::axum::http::HeaderName;
+use summer_web::headers::{Error, Header, HeaderValue};
+use summer_web::validation::garde::Garde;
+use summer_web::TypedHeader;
 use summer_web::{get_api, post_api};
 
 // GardeSchema generates JsonSchema with constraint injection from #[garde(...)] attrs.
@@ -43,15 +46,46 @@ pub struct GardeSignupForm {
     pub email: String,
 }
 
+#[derive(Debug, garde::Validate)]
+pub struct GardeDemoHeader {
+    #[garde(length(min = 3, max = 16))]
+    pub value: String,
+}
+
+static GARDE_DEMO_HEADER_NAME: HeaderName = HeaderName::from_static("x-demo");
+
+impl Header for GardeDemoHeader {
+    fn name() -> &'static HeaderName {
+        &GARDE_DEMO_HEADER_NAME
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let value = values.next().ok_or_else(Error::invalid)?;
+        let value = value.to_str().map_err(|_| Error::invalid())?;
+        Ok(Self {
+            value: value.to_string(),
+        })
+    }
+
+    fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
+        let value = HeaderValue::from_str(&self.value).expect("header value");
+        values.extend(std::iter::once(value));
+    }
+}
+
 /// Create a new user — garde validation (Context = (), zero-config)
 ///
-/// Uses `GardeJson<T>` extractor. No registry, no context — just
+/// Uses `Garde<Json<T>>` wrapper. No registry, no context — just
 /// derive `garde::Validate` and it works.
 ///
 /// @tag Garde Validation
 #[post_api("/garde/users")]
 async fn garde_create_user(
-    GardeJson(body): GardeJson<GardeCreateUserRequest>,
+    Garde(Json(body)): Garde<Json<GardeCreateUserRequest>>,
 ) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "id": 1,
@@ -66,7 +100,7 @@ async fn garde_create_user(
 /// @tag Garde Validation
 #[get_api("/garde/users")]
 async fn garde_list_users(
-    GardeQuery(query): GardeQuery<GardeListUsersQuery>,
+    Garde(summer_web::axum::extract::Query(query)): Garde<summer_web::axum::extract::Query<GardeListUsersQuery>>,
 ) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "page": query.page.unwrap_or(1),
@@ -80,7 +114,9 @@ async fn garde_list_users(
 ///
 /// @tag Garde Validation
 #[get_api("/garde/users/{id}")]
-async fn garde_get_user(GardePath(path): GardePath<GardeUserIdPath>) -> Json<serde_json::Value> {
+async fn garde_get_user(
+    Garde(summer_web::axum::extract::Path(path)): Garde<summer_web::axum::extract::Path<GardeUserIdPath>>,
+) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "id": path.id,
         "name": "Garde User",
@@ -92,7 +128,9 @@ async fn garde_get_user(GardePath(path): GardePath<GardeUserIdPath>) -> Json<ser
 ///
 /// @tag Garde Validation
 #[post_api("/garde/signup-form")]
-async fn garde_signup_form(GardeForm(body): GardeForm<GardeSignupForm>) -> Json<serde_json::Value> {
+async fn garde_signup_form(
+    Garde(summer_web::axum::extract::Form(body)): Garde<summer_web::axum::extract::Form<GardeSignupForm>>,
+) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "id": 3001,
         "username": body.username,
@@ -100,13 +138,30 @@ async fn garde_signup_form(GardeForm(body): GardeForm<GardeSignupForm>) -> Json<
     }))
 }
 
+/// Validate a typed request header — garde validation
+///
+/// @tag Garde Validation
+#[get_api("/garde/header")]
+async fn garde_header_demo(
+    Garde(TypedHeader(header)): Garde<TypedHeader<GardeDemoHeader>>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "header": header.value,
+    }))
+}
+
 // Uses #[component] to register a ValidationContextRegistry.
-// The GardeJson extractor automatically looks up the context at request time.
+// The generic Garde wrapper automatically looks up the context at request time.
 
 #[derive(Clone, Debug)]
 pub struct UserValidationRules {
     pub min_name: usize,
     pub max_name: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct PasswordValidationRules {
+    pub min_entropy: usize,
 }
 
 /// Register all validation contexts via #[component].
@@ -120,6 +175,7 @@ fn create_validation_contexts() -> summer_web::validation::context::ValidationCo
         min_name: 2,
         max_name: 50,
     });
+    registry.insert(PasswordValidationRules { min_entropy: 4 });
     registry
 }
 
@@ -134,22 +190,56 @@ pub struct GardeContextCreateUserRequest {
     pub email: String,
 }
 
-/// Create user with runtime context rules — garde validation (Scenario B)
+fn validate_password_strength(
+    value: &str,
+    ctx: &PasswordValidationRules,
+) -> Result<(), garde::Error> {
+    let score = value.chars().collect::<std::collections::HashSet<_>>().len();
+    if score < ctx.min_entropy {
+        return Err(garde::Error::new("password is not strong enough"));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, garde::Validate, summer_web::GardeSchema)]
+#[garde(context(PasswordValidationRules))]
+pub struct GardeContextPasswordRequest {
+    #[garde(custom(validate_password_strength))]
+    pub password: String,
+}
+
+/// Create a user using runtime context rules - garde validation (Scenario B)
 ///
-/// The validation rules (min_name=2, max_name=50) come from the
-/// `UserValidationRules` context in the `ValidationContextRegistry`,
-/// registered via `#[component]` at startup.
+/// The validation rules (`min_name=2`, `max_name=50`) come from the
+/// `UserValidationRules` context stored in the `ValidationContextRegistry`,
+/// which is registered at startup via `#[component]`.
 ///
 /// @tag Garde Context Validation
 #[post_api("/garde/context/users")]
 async fn garde_context_create_user(
-    GardeJson(body): GardeJson<GardeContextCreateUserRequest>,
+    Garde(Json(body)): Garde<Json<GardeContextCreateUserRequest>>,
 ) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "id": 1,
         "name": body.name,
         "email": body.email,
         "rules": "min_name=2, max_name=50 (from UserValidationRules context)",
+    }))
+}
+
+/// Create a user with runtime password rules - garde custom validation with context
+///
+/// The password rule comes from `PasswordValidationRules` stored in the
+/// `ValidationContextRegistry` and is evaluated by `validate_password_strength`.
+///
+/// @tag Garde Context Validation
+#[post_api("/garde/context/password")]
+async fn garde_context_password(
+    Garde(Json(body)): Garde<Json<GardeContextPasswordRequest>>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "accepted": true,
+        "password_length": body.password.len(),
     }))
 }
 
@@ -161,11 +251,13 @@ mod tests {
 
     #[test]
     fn garde_extractors_support_openapi_input() {
-        assert_operation_input::<GardeJson<GardeCreateUserRequest>>();
-        assert_operation_input::<GardeQuery<GardeListUsersQuery>>();
-        assert_operation_input::<GardePath<GardeUserIdPath>>();
-        assert_operation_input::<GardeForm<GardeSignupForm>>();
-        assert_operation_input::<GardeJson<GardeContextCreateUserRequest>>();
+        assert_operation_input::<Garde<Json<GardeCreateUserRequest>>>();
+        assert_operation_input::<Garde<summer_web::axum::extract::Query<GardeListUsersQuery>>>();
+        assert_operation_input::<Garde<summer_web::axum::extract::Path<GardeUserIdPath>>>();
+        assert_operation_input::<Garde<summer_web::axum::extract::Form<GardeSignupForm>>>();
+        assert_operation_input::<Garde<TypedHeader<GardeDemoHeader>>>();
+        assert_operation_input::<Garde<Json<GardeContextCreateUserRequest>>>();
+        assert_operation_input::<Garde<Json<GardeContextPasswordRequest>>>();
     }
 
     #[allow(dead_code)]
@@ -210,6 +302,15 @@ mod tests {
         // contains("str") → pattern (escaped)
         #[garde(contains("hello"))]
         contains_field: String,
+
+        #[garde(required)]
+        required_field: Option<String>,
+
+        #[garde(length(min = 1, max = 3))]
+        items_field: Vec<String>,
+
+        #[garde(skip)]
+        plain_optional_field: Option<String>,
 
         // prefix("str") → pattern: "^str"
         #[garde(prefix("https://"))]
@@ -275,6 +376,17 @@ mod tests {
         // contains("hello") → pattern with escaped string
         assert_eq!(props["contains_field"]["pattern"], "hello");
 
+        // required(option)
+        let required = json["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "required_field"));
+        assert!(!required.iter().any(|v| v == "plain_optional_field"));
+
+        // collection length -> minItems/maxItems
+        let f = &props["items_field"];
+        assert_eq!(f["minItems"], 1);
+        assert_eq!(f["maxItems"], 3);
+        assert!(f.get("minLength").is_none());
+
         // prefix("https://") → "^https://"
         assert_eq!(props["prefix_field"]["pattern"], "^https://");
 
@@ -329,5 +441,73 @@ mod tests {
 
         let email = &props["email"];
         assert_eq!(email["format"], "email", "email.format should still be injected");
+    }
+
+    #[test]
+    fn garde_schema_preserves_schemars_and_serde_metadata() {
+        use schemars::SchemaGenerator;
+
+        #[derive(Debug, Deserialize, summer_web::GardeSchema, garde::Validate)]
+        #[schemars(description = "garde schema description")]
+        struct PreservedMetadata {
+            #[serde(rename = "user_name")]
+            #[schemars(description = "renamed field description")]
+            #[garde(length(min = 2, max = 30))]
+            username: String,
+        }
+
+        let mut gen = SchemaGenerator::default();
+        let schema = <PreservedMetadata as schemars::JsonSchema>::json_schema(&mut gen);
+        let json = serde_json::to_value(&schema).unwrap();
+
+        assert_eq!(json["description"], "garde schema description");
+        let props = json["properties"].as_object().unwrap();
+        assert!(props.get("username").is_none());
+        let renamed = &props["user_name"];
+        assert_eq!(renamed["description"], "renamed field description");
+        assert_eq!(renamed["minLength"], 2);
+        assert_eq!(renamed["maxLength"], 30);
+    }
+
+    #[test]
+    fn garde_schema_preserves_rename_all_for_injected_constraints() {
+        use schemars::SchemaGenerator;
+
+        #[derive(Debug, Deserialize, summer_web::GardeSchema, garde::Validate)]
+        #[serde(rename_all = "camelCase")]
+        struct RenameAllSerde {
+            #[garde(length(min = 2, max = 30))]
+            user_name: String,
+        }
+
+        #[derive(Debug, Deserialize, summer_web::GardeSchema, garde::Validate)]
+        #[schemars(rename_all = "kebab-case")]
+        struct RenameAllSchemars {
+            #[garde(length(min = 1, max = 3))]
+            item_count: Vec<String>,
+            #[garde(required)]
+            display_name: Option<String>,
+        }
+
+        let mut gen = SchemaGenerator::default();
+        let schema = <RenameAllSerde as schemars::JsonSchema>::json_schema(&mut gen);
+        let json = serde_json::to_value(&schema).unwrap();
+        let props = json["properties"].as_object().unwrap();
+        assert!(props.get("user_name").is_none());
+        let renamed = &props["userName"];
+        assert_eq!(renamed["minLength"], 2);
+        assert_eq!(renamed["maxLength"], 30);
+
+        let mut gen = SchemaGenerator::default();
+        let schema = <RenameAllSchemars as schemars::JsonSchema>::json_schema(&mut gen);
+        let json = serde_json::to_value(&schema).unwrap();
+        let props = json["properties"].as_object().unwrap();
+        assert!(props.get("item_count").is_none());
+        let renamed = &props["item-count"];
+        assert_eq!(renamed["minItems"], 1);
+        assert_eq!(renamed["maxItems"], 3);
+
+        let required = json["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "display-name"));
     }
 }

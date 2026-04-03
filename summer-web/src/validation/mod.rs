@@ -7,13 +7,126 @@
 
 use crate::problem_details::{ProblemDetails, Violation};
 use axum::extract::rejection::{FormRejection, JsonRejection, PathRejection, QueryRejection};
+#[cfg(feature = "typed-header")]
+use axum_extra::typed_header::TypedHeaderRejection;
 
-#[cfg(feature = "garde")]
+#[cfg(any(feature = "garde", feature = "validator"))]
 pub mod context;
 #[cfg(feature = "garde")]
 pub mod garde;
 #[cfg(feature = "validator")]
 pub mod validator;
+
+/// Shared trait for wrapper extractors to access the inner value to validate.
+pub trait HasValidate {
+    type Validate;
+    fn get_validate(&self) -> &Self::Validate;
+}
+
+/// Shared extractor metadata for validation wrappers.
+pub trait ValidationSource {
+    type Rejection;
+
+    fn violation_location() -> crate::problem_details::ViolationLocation;
+    fn rejection_to_problem(rejection: Self::Rejection) -> ProblemDetails;
+}
+
+impl<T> HasValidate for axum::Json<T> {
+    type Validate = T;
+    fn get_validate(&self) -> &Self::Validate {
+        &self.0
+    }
+}
+
+impl<T> ValidationSource for axum::Json<T> {
+    type Rejection = JsonRejection;
+
+    fn violation_location() -> crate::problem_details::ViolationLocation {
+        crate::problem_details::ViolationLocation::Body
+    }
+
+    fn rejection_to_problem(rejection: Self::Rejection) -> ProblemDetails {
+        json_rejection_to_problem(rejection)
+    }
+}
+
+impl<T> HasValidate for axum::extract::Query<T> {
+    type Validate = T;
+    fn get_validate(&self) -> &Self::Validate {
+        &self.0
+    }
+}
+
+impl<T> ValidationSource for axum::extract::Query<T> {
+    type Rejection = QueryRejection;
+
+    fn violation_location() -> crate::problem_details::ViolationLocation {
+        crate::problem_details::ViolationLocation::Query
+    }
+
+    fn rejection_to_problem(rejection: Self::Rejection) -> ProblemDetails {
+        query_rejection_to_problem(rejection)
+    }
+}
+
+impl<T> HasValidate for axum::extract::Path<T> {
+    type Validate = T;
+    fn get_validate(&self) -> &Self::Validate {
+        &self.0
+    }
+}
+
+impl<T> ValidationSource for axum::extract::Path<T> {
+    type Rejection = PathRejection;
+
+    fn violation_location() -> crate::problem_details::ViolationLocation {
+        crate::problem_details::ViolationLocation::Path
+    }
+
+    fn rejection_to_problem(rejection: Self::Rejection) -> ProblemDetails {
+        path_rejection_to_problem(rejection)
+    }
+}
+
+impl<T> HasValidate for axum::extract::Form<T> {
+    type Validate = T;
+    fn get_validate(&self) -> &Self::Validate {
+        &self.0
+    }
+}
+
+impl<T> ValidationSource for axum::extract::Form<T> {
+    type Rejection = FormRejection;
+
+    fn violation_location() -> crate::problem_details::ViolationLocation {
+        crate::problem_details::ViolationLocation::Form
+    }
+
+    fn rejection_to_problem(rejection: Self::Rejection) -> ProblemDetails {
+        form_rejection_to_problem(rejection)
+    }
+}
+
+#[cfg(feature = "typed-header")]
+impl<T> HasValidate for axum_extra::TypedHeader<T> {
+    type Validate = T;
+    fn get_validate(&self) -> &Self::Validate {
+        &self.0
+    }
+}
+
+#[cfg(feature = "typed-header")]
+impl<T> ValidationSource for axum_extra::TypedHeader<T> {
+    type Rejection = TypedHeaderRejection;
+
+    fn violation_location() -> crate::problem_details::ViolationLocation {
+        crate::problem_details::ViolationLocation::Header
+    }
+
+    fn rejection_to_problem(rejection: Self::Rejection) -> ProblemDetails {
+        typed_header_rejection_to_problem(rejection)
+    }
+}
 
 fn json_rejection_to_problem(rejection: JsonRejection) -> ProblemDetails {
     let msg = rejection.body_text();
@@ -127,6 +240,18 @@ fn form_rejection_to_problem(rejection: FormRejection) -> ProblemDetails {
         }
         _ => ProblemDetails::validation_error_simple("failed to read form body"),
     }
+}
+
+#[cfg(feature = "typed-header")]
+fn typed_header_rejection_to_problem(rejection: TypedHeaderRejection) -> ProblemDetails {
+    let field = rejection.name().as_str();
+    let message = if rejection.is_missing() {
+        "this header is required"
+    } else {
+        "invalid header value"
+    };
+
+    ProblemDetails::validation_error(vec![Violation::header(field, message)])
 }
 
 fn split_field_message(s: &str) -> (&str, &str) {

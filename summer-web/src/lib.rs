@@ -3,6 +3,8 @@
 #![doc(html_favicon_url = "https://summer-rs.github.io/favicon.ico")]
 #![doc(html_logo_url = "https://summer-rs.github.io/logo.svg")]
 
+extern crate self as summer_web;
+
 /// summer-web config
 pub mod config;
 /// summer-web defined error
@@ -25,14 +27,25 @@ pub use summer_macros::ProblemDetails;
 pub use summer_macros::GardeSchema;
 #[cfg(feature = "validator")]
 pub use summer_macros::ValidatorSchema;
-
-#[cfg(all(feature = "axum-valid", feature = "garde"))]
-pub use axum_valid::Garde;
-#[cfg(all(feature = "axum-valid", feature = "validator"))]
-pub use axum_valid::Valid;
+#[cfg(feature = "validator")]
+pub use summer_macros::ValidatorContext;
+#[cfg(feature = "validator")]
+pub use validation::validator::ValidatorContextType;
+#[cfg(feature = "typed-header")]
+pub use axum_extra::headers;
+#[cfg(feature = "typed-header")]
+pub use axum_extra::TypedHeader;
 
 #[cfg(feature = "socket_io")]
 pub use { socketioxide, rmpv };
+
+#[cfg(feature = "axum-valid")]
+pub mod axum_valid {
+    #[cfg(feature = "garde")]
+    pub use ::axum_valid::Garde;
+    #[cfg(feature = "validator")]
+    pub use ::axum_valid::Valid;
+}
 
 pub use axum;
 pub use summer::async_trait;

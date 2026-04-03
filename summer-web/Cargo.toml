@@ -15,6 +15,7 @@ http2 = ["axum/http2"]
 socket_io = ["dep:socketioxide", "dep:rmpv", "summer-macros/socket_io"]
 multipart = ["axum/multipart", "aide/axum-multipart"]
 ws = ["axum/ws", "aide/axum-ws"]
+typed-header = ["dep:axum-extra", "axum-valid?/typed_header"]
 openapi = [
     "aide",
     "aide/axum",
@@ -44,6 +45,7 @@ axum-valid = ["dep:axum-valid", "axum-valid/basic"]
 summer = { path = "../summer", version = "0.5" }
 summer-macros = { path = "../summer-macros", version = "0.5" }
 axum = { workspace = true, features = ["macros"] }
+axum-extra = { workspace = true, optional = true, default-features = false, features = ["typed-header"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
