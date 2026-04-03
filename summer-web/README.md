@@ -20,6 +20,7 @@ optional **features**:
 * `openapi-swagger`: Swagger documentation interface
 * `validator`: validator extractors (standalone, no axum-valid dependency)
 * `garde`: garde extractors (standalone, with custom Context support)
+* `typed-header`: typed header validation extractors based on `axum_extra::TypedHeader`
 * `axum-valid`: axum-valid compatibility layer (optional, combinable with validator/garde)
 
 ## Configuration items
@@ -561,137 +562,115 @@ This will automatically generate responses with the request URI:
 
 summer-web provides integration with two validation frameworks. Both convert validation failures into ProblemDetails responses.
 
-## Feature Combinations
+Enable the features you actually use:
 
-```toml
-# Validator only (standalone extractors, no axum-valid dependency)
-summer-web = { version = "<version>", features = ["validator"] }
-
-# Garde only (standalone extractors, with custom Context support)
-summer-web = { version = "<version>", features = ["garde"] }
-
-# Both
-summer-web = { version = "<version>", features = ["validator", "garde"] }
-
-# With axum-valid compatibility (optional)
-summer-web = { version = "<version>", features = ["validator", "garde", "axum-valid"] }
-```
+- `validator` for validator runtime wrappers
+- `garde` for garde runtime wrappers
+- `typed-header` if you validate `TypedHeader<T>`
+- `axum-valid` only if you also want compatibility with `summer_web::axum_valid::*`
 
 ## Validator
 
-Use `ValidatorJson`, `ValidatorQuery`, `ValidatorPath`, `ValidatorForm` extractors:
+summer-web does not re-document validator's rules. It adds:
+
+- `Validator<E>` for plain `validator::Validate`
+- `ValidatorEx<E>` for `validator::ValidateArgs`
+- `ProblemDetails` output for validation and extractor errors
+- `ValidationContextRegistry` integration for runtime args
+
+Minimal usage:
 
 ```rust,ignore
-use summer_web::validation::validator::{ValidatorJson, ValidatorQuery};
-use validator::Validate;
+use summer_web::axum::Json;
+use summer_web::validation::validator::{Validator, ValidatorEx};
 
-#[derive(Debug, Deserialize, summer_web::ValidatorSchema, Validate)]
-pub struct CreateUserRequest {
-    #[validate(length(min = 1, max = 100))]
-    pub name: String,
-    #[validate(email)]
-    pub email: String,
-    #[validate(range(min = 0, max = 150))]
-    pub age: Option<i32>,
-}
-
-#[post_api("/users")]
 async fn create_user(
-    ValidatorJson(body): ValidatorJson<CreateUserRequest>,
+    Validator(Json(body)): Validator<Json<CreateUserRequest>>,
 ) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "name": body.name, "email": body.email }))
+    Json(serde_json::json!({ "ok": true }))
+}
+
+async fn paginator(
+    ValidatorEx(Json(body)): ValidatorEx<Json<Paginator>>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "ok": true }))
 }
 ```
 
-Validation failures return:
+Notes:
 
-```json
-{
-  "type": "about:blank",
-  "title": "Validation Error",
-  "status": 422,
-  "violations": [
-    { "field": "email", "message": "must be a valid email address", "in": "body" }
-  ]
-}
-```
+- `ValidatorContext` derives runtime context metadata from `#[validate(context = ...)]`
+- `ValidatorEx<E>` currently supports `Args = &A`
+- supported extractor combinations include `Json`, `Query`, `Path`, `Form`, and `TypedHeader`
+- validation failures are converted to `ProblemDetails`
 
-## Garde
-
-Use `GardeJson`, `GardeQuery`, `GardePath`, `GardeForm` extractors:
-
-```rust,ignore
-use summer_web::validation::garde::{GardeJson, GardeQuery};
-
-// Scenario A: Context = (), zero-config
-#[derive(Debug, Deserialize, summer_web::GardeSchema, garde::Validate)]
-pub struct CreateUserRequest {
-    #[garde(length(min = 1, max = 100))]
-    pub name: String,
-    #[garde(email)]
-    pub email: String,
-}
-```
-
-### Garde Custom Context
-
-When validation rules need runtime configuration, use `ValidationContextRegistry`:
+If you use runtime context, register it through `ValidationContextRegistry`:
 
 ```rust,ignore
 use summer_web::validation::context::ValidationContextRegistry;
 
 #[derive(Clone, Debug)]
-pub struct UserRules {
-    pub min_name: usize,
-    pub max_name: usize,
+struct PageRules {
+    max_page_size: usize,
 }
 
-// Register via #[component]
 #[summer::component]
 fn create_validation_contexts() -> ValidationContextRegistry {
     let mut registry = ValidationContextRegistry::new();
-    registry.insert(UserRules { min_name: 2, max_name: 50 });
+    registry.insert(PageRules { max_page_size: 100 });
     registry
 }
+```
 
-// Use GardeSchema instead of JsonSchema (resolves context expression conflict)
-#[derive(Debug, Deserialize, garde::Validate, summer_web::GardeSchema)]
-#[garde(context(UserRules as ctx))]
-pub struct CreateUserRequest {
-    #[garde(length(min = ctx.min_name, max = ctx.max_name))]
-    pub name: String,
-    #[garde(email)]
-    pub email: String,
+Use macros on your request type only when you need them:
+
+```rust,ignore
+#[derive(Debug, Deserialize, validator::Validate, summer_web::ValidatorContext)]
+#[validate(context = PageRules)]
+struct Paginator {
+    #[validate(custom(function = "validate_page_size", use_context))]
+    page_size: usize,
+}
+```
+
+## Garde
+
+summer-web adds a generic `Garde<E>` wrapper and integrates `ValidationContextRegistry` with garde's native context model:
+
+```rust,ignore
+use summer_web::axum::Json;
+use summer_web::validation::garde::Garde;
+
+async fn create_user(
+    Garde(Json(body)): Garde<Json<CreateUserRequest>>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "ok": true }))
 }
 ```
 
 ## OpenAPI Constraint Injection
 
-`ValidatorSchema` and `GardeSchema` macros automatically inject literal values from validation
-attributes into JSON Schema, so OpenAPI documentation includes `minLength`, `maximum`, `format`, etc.:
+`ValidatorSchema` and `GardeSchema` are optional derives for OpenAPI / JSON Schema generation. They preserve baseline `schemars` behavior and inject static validation keywords such as:
 
-```rust,ignore
-// Use ValidatorSchema (replaces JsonSchema)
-#[derive(Deserialize, summer_web::ValidatorSchema, Validate)]
-pub struct Foo {
-    #[validate(length(min = 1, max = 100))]
-    pub name: String,        // → OpenAPI: {"type": "string", "minLength": 1, "maxLength": 100}
-    #[validate(email)]
-    pub email: String,       // → OpenAPI: {"type": "string", "format": "email"}
-}
+- string length: `minLength` / `maxLength`
+- collection length: `minItems` / `maxItems`
+- numeric range: `minimum` / `maximum`
+- `required`
+- common `format` / `pattern` mappings
 
-// Use GardeSchema (replaces JsonSchema)
-#[derive(Deserialize, summer_web::GardeSchema, garde::Validate)]
-pub struct Bar {
-    #[garde(length(min = 1, max = 100))]
-    pub name: String,        // → OpenAPI: {"type": "string", "minLength": 1, "maxLength": 100}
-    #[garde(email)]
-    pub email: String,       // → OpenAPI: {"type": "string", "format": "email"}
-}
-```
+Difference from plain `JsonSchema`:
 
-> **Note**: You can also use `#[derive(JsonSchema)]` directly if you don't need OpenAPI constraint
-> injection, but the generated schema will not include minLength, maximum, etc.
+- `JsonSchema` only gives you baseline schemars output
+- `ValidatorSchema` / `GardeSchema` keep that baseline output and add static validation keywords
+- runtime-derived values are still not injected into OpenAPI
+
+Macro note:
+
+- `ValidatorSchema` / `GardeSchema` are heavier than plain `JsonSchema`
+- the macro internally builds a mirrored helper struct, lets `schemars` derive schema for that helper, then patches validation keywords into the final schema
+- this keeps schema behavior compatible, but it also means extra macro expansion and derive work
+- for projects with many schema-carrying structs, prefer using these derives only on types that really need OpenAPI/schema validation keywords
+
+If you don't need validation keywords in your schema, you can continue to use plain `#[derive(JsonSchema)]`.
 
 Full code reference: [`openapi-example`](https://github.com/summer-rs/summer-rs/tree/master/examples/openapi-example)
-
