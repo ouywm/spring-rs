@@ -535,7 +535,7 @@ fn create_primary_db(...) -> PrimaryDb { ... }
 
 ## 迁移指南
 
-**从手动 Plugin 迁移到 `#[component]`**s
+**从手动 Plugin 迁移到 `#[component]`**
 
 **之前：**
 
