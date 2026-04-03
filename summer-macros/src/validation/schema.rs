@@ -48,14 +48,14 @@ struct FieldInfo {
 
 #[derive(Clone, Copy)]
 enum RenameRule {
-    LowerCase,
-    UpperCase,
-    PascalCase,
-    CamelCase,
-    SnakeCase,
-    ScreamingSnakeCase,
-    KebabCase,
-    ScreamingKebabCase,
+    Lower,
+    Upper,
+    Pascal,
+    Camel,
+    Snake,
+    ScreamingSnake,
+    Kebab,
+    ScreamingKebab,
 }
 
 fn collect_field_info<F>(
@@ -287,14 +287,14 @@ fn rename_all_from_attr(attrs: &[Attribute], attr_name: &str) -> Option<RenameRu
 
 fn parse_rename_rule(value: &str) -> Option<RenameRule> {
     match value {
-        "lowercase" => Some(RenameRule::LowerCase),
-        "UPPERCASE" => Some(RenameRule::UpperCase),
-        "PascalCase" => Some(RenameRule::PascalCase),
-        "camelCase" => Some(RenameRule::CamelCase),
-        "snake_case" => Some(RenameRule::SnakeCase),
-        "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnakeCase),
-        "kebab-case" => Some(RenameRule::KebabCase),
-        "SCREAMING-KEBAB-CASE" => Some(RenameRule::ScreamingKebabCase),
+        "lowercase" => Some(RenameRule::Lower),
+        "UPPERCASE" => Some(RenameRule::Upper),
+        "PascalCase" => Some(RenameRule::Pascal),
+        "camelCase" => Some(RenameRule::Camel),
+        "snake_case" => Some(RenameRule::Snake),
+        "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnake),
+        "kebab-case" => Some(RenameRule::Kebab),
+        "SCREAMING-KEBAB-CASE" => Some(RenameRule::ScreamingKebab),
         _ => None,
     }
 }
@@ -303,10 +303,10 @@ fn apply_rename_rule(name: &str, rule: RenameRule) -> String {
     let words = split_words(name);
 
     match rule {
-        RenameRule::LowerCase => words.join("").to_lowercase(),
-        RenameRule::UpperCase => words.join("").to_uppercase(),
-        RenameRule::PascalCase => words.iter().map(|w| capitalize(w)).collect::<String>(),
-        RenameRule::CamelCase => {
+        RenameRule::Lower => words.join("").to_lowercase(),
+        RenameRule::Upper => words.join("").to_uppercase(),
+        RenameRule::Pascal => words.iter().map(|w| capitalize(w)).collect::<String>(),
+        RenameRule::Camel => {
             let mut iter = words.iter();
             let Some(first) = iter.next() else { return String::new(); };
             let mut out = first.to_lowercase();
@@ -315,10 +315,10 @@ fn apply_rename_rule(name: &str, rule: RenameRule) -> String {
             }
             out
         }
-        RenameRule::SnakeCase => words.join("_").to_lowercase(),
-        RenameRule::ScreamingSnakeCase => words.join("_").to_uppercase(),
-        RenameRule::KebabCase => words.join("-").to_lowercase(),
-        RenameRule::ScreamingKebabCase => words.join("-").to_uppercase(),
+        RenameRule::Snake => words.join("_").to_lowercase(),
+        RenameRule::ScreamingSnake => words.join("_").to_uppercase(),
+        RenameRule::Kebab => words.join("-").to_lowercase(),
+        RenameRule::ScreamingKebab => words.join("-").to_uppercase(),
     }
 }
 
