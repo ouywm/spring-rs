@@ -22,11 +22,15 @@ pub enum Env {
 impl Env {
     /// Initializes environment variables from the `.env` file and reads `summer_ENV` to determine the active environment for the application.
     pub fn init() -> Self {
-        match dotenvy::dotenv() {
-            Ok(path) => {
-                log::debug!("Loaded the environment variable file under the path: \"{path:?}\"",)
+        // Miri runs with filesystem isolation; `dotenvy` uses `getcwd`, which is unsupported there.
+        #[cfg(not(miri))]
+        {
+            match dotenvy::dotenv() {
+                Ok(path) => {
+                    log::debug!("Loaded the environment variable file under the path: \"{path:?}\"",)
+                }
+                Err(e) => log::debug!("Environment variable file not found: {e}"),
             }
-            Err(e) => log::debug!("Environment variable file not found: {e}"),
         }
 
         Self::from_env()
