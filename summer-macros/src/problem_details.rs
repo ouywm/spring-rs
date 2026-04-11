@@ -244,11 +244,10 @@ fn generate_problem_details_for_variant(
         };
         
         let mut builder = quote! {
-            ::summer_web::problem_details::ProblemDetails::new(
-                #custom_type,
-                #title_expr,
-                #status_code
-            ).with_detail(#detail_expr)
+            ::summer_web::problem_details::ProblemDetails::new(#status_code)
+                .with_type(#custom_type)
+                .with_title(#title_expr)
+                .with_detail(#detail_expr)
         };
         
         if let Some(instance_val) = instance {
@@ -269,14 +268,14 @@ fn generate_problem_details_for_variant(
                     quote! { #default_detail.to_string() }
                 };
                 quote! {
-                    ::summer_web::problem_details::ProblemDetails::validation_error(#detail_expr)
+                    ::summer_web::problem_details::ProblemDetails::validation_error_simple(#detail_expr)
                 }
             },
             401 => quote! {
-                ::summer_web::problem_details::ProblemDetails::authentication_error()
+                ::summer_web::problem_details::ProblemDetails::unauthorized()
             },
             403 => quote! {
-                ::summer_web::problem_details::ProblemDetails::authorization_error()
+                ::summer_web::problem_details::ProblemDetails::forbidden()
             },
             404 => {
                 let resource_expr = if let Some(detail_val) = detail {
@@ -297,9 +296,6 @@ fn generate_problem_details_for_variant(
                 ::summer_web::problem_details::ProblemDetails::service_unavailable()
             },
             _ => {
-                // For other status codes, use about:blank as default problem_type
-                let problem_type = "about:blank".to_string();
-                
                 let title_expr = if let Some(title_val) = title {
                     resolve_string_or_format_expr(enum_ident, variant_ident, variant_fields, &title_val)?
                 } else if let Some(error_fmt) = &error_format {
@@ -319,11 +315,9 @@ fn generate_problem_details_for_variant(
                 };
                 
                 let mut builder = quote! {
-                    ::summer_web::problem_details::ProblemDetails::new(
-                        #problem_type,
-                        #title_expr,
-                        #status_code
-                    ).with_detail(#detail_expr)
+                    ::summer_web::problem_details::ProblemDetails::new(#status_code)
+                        .with_title(#title_expr)
+                        .with_detail(#detail_expr)
                 };
                 
                 if let Some(instance_val) = instance {
