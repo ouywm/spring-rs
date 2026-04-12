@@ -3,10 +3,9 @@
 #![doc(html_favicon_url = "https://summer-rs.github.io/favicon.ico")]
 #![doc(html_logo_url = "https://summer-rs.github.io/logo.svg")]
 
-
-mod custom_storage;
 mod config;
 mod configurator;
+mod custom_storage;
 mod prelude;
 #[cfg(feature = "with-summer-redis")]
 pub mod storage;
@@ -170,7 +169,11 @@ impl SaTokenPlugin {
         {
             if let Some(redis) = app.get_component::<summer_redis::Redis>() {
                 tracing::info!("Using SummerRedisStorage (reusing summer-redis connection)");
-                let storage = storage::SummerRedisStorage::new(redis);
+                let storage = storage::SummerRedisStorage::new(
+                    redis,
+                    config.storage_prefix.clone(),
+                    config.rewrite_storage_prefix,
+                );
                 Ok(std::sync::Arc::new(storage))
             } else {
                 anyhow::bail!(

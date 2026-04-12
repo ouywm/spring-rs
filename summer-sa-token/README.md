@@ -49,6 +49,17 @@ token_style = "Uuid"
 # Token prefix (e.g., "Bearer ")
 token_prefix = "Bearer "
 
+# Optional Redis storage prefix (only effective with `with-summer-redis`)
+# A trailing `:` is optional and will be normalized automatically.
+# When rewrite_storage_prefix = false:
+#   `sa:login:token:admin` -> `demo:sa:login:token:admin`
+# When rewrite_storage_prefix = true:
+#   `sa:login:token:admin` -> `demo:login:token:admin`
+storage_prefix = "demo"
+
+# Rewrite the built-in `sa:` storage root when a storage prefix is configured
+rewrite_storage_prefix = false
+
 # JWT configuration (only when token_style = "Jwt")
 jwt_secret_key = "your-secret-key"
 jwt_algorithm = "HS256"    # HS256, HS384, HS512
@@ -63,6 +74,26 @@ nonce_timeout = 300
 enable_refresh_token = false
 refresh_token_timeout = 604800  # 7 days
 ```
+
+When using `with-summer-redis`, `storage_prefix` can be used to namespace all
+Sa-Token Redis keys. This is useful when multiple applications share the same
+Redis instance and you want to avoid key collisions.
+
+This behavior is constrained by upstream `sa-token-core`: its logical storage
+root `sa:` is hardcoded and is not exposed as a configurable option. Because of
+that, `summer-sa-token` can only adjust the physical Redis keys at the storage
+adapter boundary.
+
+If `storage_prefix` does not end with `:`, `summer-sa-token` will add it
+automatically. For example, `demo` is normalized to `demo:`.
+
+- `rewrite_storage_prefix = false`:
+  prefixes keys without changing the built-in `sa:` root
+- `rewrite_storage_prefix = true`:
+  rewrites the built-in `sa:` root to your configured prefix
+
+Switching between these two modes changes the physical Redis key names, so
+existing login/session/token data will not be reused across the mode switch.
 
 ## Quick Start
 

@@ -3,10 +3,11 @@
 //! Uses AppBuilder and Plugin pattern for proper initialization
 
 use sa_token_core::token::TokenValue;
+use std::time::{SystemTime, UNIX_EPOCH};
 use summer::app::AppBuilder;
 use summer::async_trait;
 use summer::plugin::{ComponentRegistry, MutableComponentRegistry, Plugin};
-use summer_sa_token::{OptionalSaTokenExtractor, SaTokenLayer, SaTokenState, StpUtil};
+use summer_sa_token::{OptionalSaTokenExtractor, SaStorage, SaTokenLayer, SaTokenState, StpUtil};
 use summer_web::axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -15,6 +16,12 @@ use summer_web::axum::{
     Router,
 };
 use tower::ServiceExt;
+
+#[cfg(feature = "with-summer-redis")]
+use summer_sa_token::storage::SummerRedisStorage;
+
+#[cfg(feature = "with-summer-redis")]
+use summer_redis::redis::AsyncCommands;
 
 /// Test plugin that initializes SaTokenState for testing
 struct TestSaTokenPlugin;
@@ -200,6 +207,107 @@ async fn test_sa_token_integration() {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+}
+
+#[cfg(feature = "with-summer-redis")]
+async fn create_redis_connection() -> Option<summer_redis::Redis> {
+    let url = std::env::var("REDIS_URL").ok()?;
+    let client = summer_redis::redis::Client::open(url).expect("redis client should open");
+    Some(
+        client
+            .get_connection_manager()
+            .await
+            .expect("redis connection manager should connect"),
+    )
+}
+
+#[cfg(feature = "with-summer-redis")]
+fn unique_storage_prefix(tag: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be after epoch")
+        .as_nanos();
+    format!("demo-{tag}-{nanos}")
+}
+
+#[cfg(feature = "with-summer-redis")]
+#[tokio::test]
+async fn test_redis_storage_rewrites_prefix_for_physical_keys() {
+    let Some(mut redis) = create_redis_connection().await else {
+        eprintln!("skipping: REDIS_URL is not set");
+        return;
+    };
+    let prefix = unique_storage_prefix("rewrite");
+    let storage = SummerRedisStorage::new(redis.clone(), Some(prefix.clone()), true);
+
+    storage.clear().await.expect("clear should succeed");
+
+    storage
+        .set("sa:login:token:user1", "token-123", None)
+        .await
+        .expect("set should succeed");
+
+    let rewritten_key = format!("{prefix}:login:token:user1");
+    let raw: Option<String> = redis
+        .get(&rewritten_key)
+        .await
+        .expect("prefixed key should be readable");
+    assert_eq!(raw.as_deref(), Some("token-123"));
+
+    let legacy_key = format!("{prefix}:sa:login:token:user1");
+    let old_raw: Option<String> = redis
+        .get(&legacy_key)
+        .await
+        .expect("old prefixed key should be readable");
+    assert!(old_raw.is_none());
+
+    storage.clear().await.expect("clear should succeed");
+}
+
+#[cfg(feature = "with-summer-redis")]
+#[tokio::test]
+async fn test_redis_storage_keys_and_clear_work_with_rewritten_prefix() {
+    let Some(mut redis) = create_redis_connection().await else {
+        eprintln!("skipping: REDIS_URL is not set");
+        return;
+    };
+    let prefix = unique_storage_prefix("keys");
+    let storage = SummerRedisStorage::new(redis.clone(), Some(prefix.clone()), true);
+
+    storage.clear().await.expect("clear should succeed");
+
+    redis
+        .set::<_, _, ()>(format!("{prefix}:token:one"), "a")
+        .await
+        .expect("set should succeed");
+    redis
+        .set::<_, _, ()>(format!("{prefix}:session:user1"), "b")
+        .await
+        .expect("set should succeed");
+    redis
+        .set::<_, _, ()>(format!("{prefix}:refresh:token-1"), "c")
+        .await
+        .expect("set should succeed");
+
+    let mut keys = storage.keys("sa:*").await.expect("keys should succeed");
+    keys.sort();
+
+    assert_eq!(
+        keys,
+        vec![
+            "sa:refresh:token-1".to_string(),
+            "sa:session:user1".to_string(),
+            "sa:token:one".to_string()
+        ]
+    );
+
+    storage.clear().await.expect("clear should succeed");
+
+    let remaining: Vec<String> = redis
+        .keys(format!("{prefix}:*"))
+        .await
+        .expect("keys should succeed");
+    assert!(remaining.is_empty());
 }
 
 mod test_config_conversion {

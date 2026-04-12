@@ -2,9 +2,9 @@
 //!
 //! This module defines the configuration for summer-sa-token plugin.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use summer::config::Configurable;
-use schemars::JsonSchema;
 // Re-export CoreConfig from upstream
 pub use sa_token_core::config::SaTokenConfig as CoreConfig;
 
@@ -126,6 +126,20 @@ pub struct SaTokenConfig {
     #[serde(default)]
     pub token_prefix: Option<String>,
 
+    /// Optional storage key prefix for namespacing Sa-Token keys in Redis.
+    #[serde(default)]
+    pub storage_prefix: Option<String>,
+
+    /// Rewrite the default `sa:` storage root when `storage_prefix` is set.
+    ///
+    /// When disabled:
+    /// - `sa:login:token:admin` -> `demo:sa:login:token:admin`
+    ///
+    /// When enabled:
+    /// - `sa:login:token:admin` -> `demo:login:token:admin`
+    #[serde(default)]
+    pub rewrite_storage_prefix: bool,
+
     /// JWT secret key
     #[serde(default)]
     pub jwt_secret_key: Option<String>,
@@ -179,6 +193,8 @@ impl Default for SaTokenConfig {
             is_read_header: true,
             is_read_body: false,
             token_prefix: None,
+            storage_prefix: None,
+            rewrite_storage_prefix: false,
             jwt_secret_key: None,
             jwt_algorithm: default_jwt_algorithm(),
             jwt_issuer: None,

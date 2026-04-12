@@ -41,9 +41,9 @@
 
 use sa_token_adapter::storage::SaStorage;
 use sa_token_core::router::PathAuthConfig;
+use std::sync::Arc;
 use summer::app::AppBuilder;
 use summer::plugin::MutableComponentRegistry;
-use std::sync::Arc;
 
 /// Trait for configuring Sa-Token path-based authentication
 ///

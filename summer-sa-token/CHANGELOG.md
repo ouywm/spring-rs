@@ -1,10 +1,17 @@
 # Changelog
 
+## 0.5.1
+
+- **added**: support `storage_prefix` for `with-summer-redis`, allowing Redis key namespacing such as `demo:sa:login:token:admin` ([#235])
+- **added**: support `rewrite_storage_prefix` for `with-summer-redis`, allowing `sa:login:token:admin` to be rewritten as `demo:login:token:admin` ([#235])
+- **changed**: normalize `storage_prefix` automatically so `demo` is treated as `demo:` ([#235])
+
 ## 0.5.0
 
 - **changed**: upgrade `summer` 0.4 to 0.5 ([#217])
 
 [#217]: https://github.com/summer-rs/summer-rs/pull/217
+[#235]: https://github.com/summer-rs/summer-rs/issues/235
 
 ## 0.4.2
 

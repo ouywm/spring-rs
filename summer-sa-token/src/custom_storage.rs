@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use summer::async_trait;
 use sa_token_adapter::storage::{SaStorage, StorageResult};
+use summer::async_trait;
 use summer::plugin::LazyComponent;
 
 /// Custom Sa-Token storage component wrapper.
@@ -90,93 +90,106 @@ impl<T: Clone + Send + Sync + 'static> LazyStorageWrapper<T> {
 #[async_trait]
 impl<T: SaStorage + Clone + Send + Sync + 'static> SaStorage for LazyStorageWrapper<T> {
     async fn get(&self, key: &str) -> StorageResult<Option<String>> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.get(key).await
     }
 
     async fn set(&self, key: &str, value: &str, ttl: Option<Duration>) -> StorageResult<()> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.set(key, value, ttl).await
     }
 
     async fn delete(&self, key: &str) -> StorageResult<()> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.delete(key).await
     }
 
     async fn exists(&self, key: &str) -> StorageResult<bool> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.exists(key).await
     }
 
     async fn expire(&self, key: &str, ttl: Duration) -> StorageResult<()> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.expire(key, ttl).await
     }
 
     async fn ttl(&self, key: &str) -> StorageResult<Option<Duration>> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.ttl(key).await
     }
 
     async fn mget(&self, keys: &[&str]) -> StorageResult<Vec<Option<String>>> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.mget(keys).await
     }
 
     async fn mset(&self, items: &[(&str, &str)], ttl: Option<Duration>) -> StorageResult<()> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.mset(items, ttl).await
     }
 
     async fn mdel(&self, keys: &[&str]) -> StorageResult<()> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.mdel(keys).await
     }
 
     async fn incr(&self, key: &str) -> StorageResult<i64> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.incr(key).await
     }
 
     async fn decr(&self, key: &str) -> StorageResult<i64> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.decr(key).await
     }
 
     async fn clear(&self) -> StorageResult<()> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.clear().await
     }
 
     async fn keys(&self, pattern: &str) -> StorageResult<Vec<String>> {
-        let storage = self.inner.get().map_err(|e| {
-            sa_token_adapter::storage::StorageError::OperationFailed(e.to_string())
-        })?;
+        let storage = self
+            .inner
+            .get()
+            .map_err(|e| sa_token_adapter::storage::StorageError::OperationFailed(e.to_string()))?;
         storage.keys(pattern).await
     }
 }

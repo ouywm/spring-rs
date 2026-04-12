@@ -17,6 +17,8 @@ fn test_sa_token_config_creation() {
         is_read_header: true,
         is_read_body: false,
         token_prefix: Some("Bearer ".to_string()),
+        storage_prefix: None,
+        rewrite_storage_prefix: false,
         jwt_secret_key: None,
         jwt_algorithm: Some("HS256".to_string()),
         jwt_issuer: None,
@@ -110,6 +112,36 @@ fn test_sa_token_config_with_prefix() {
     };
 
     assert_eq!(config.token_prefix, Some("Bearer ".to_string()));
+}
+
+#[test]
+fn test_sa_token_config_with_storage_prefix() {
+    let toml_str = r#"
+        token_name = "Authorization"
+        storage_prefix = "demo:"
+    "#;
+
+    let config: Result<SaTokenConfig, _> = toml::from_str(toml_str);
+    assert!(config.is_ok());
+
+    let config = config.unwrap();
+    assert_eq!(config.storage_prefix, Some("demo:".to_string()));
+}
+
+#[test]
+fn test_sa_token_config_with_rewrite_storage_prefix() {
+    let toml_str = r#"
+        token_name = "Authorization"
+        storage_prefix = "demo:"
+        rewrite_storage_prefix = true
+    "#;
+
+    let config: Result<SaTokenConfig, _> = toml::from_str(toml_str);
+    assert!(config.is_ok());
+
+    let config = config.unwrap();
+    assert_eq!(config.storage_prefix, Some("demo:".to_string()));
+    assert!(config.rewrite_storage_prefix);
 }
 
 #[test]
