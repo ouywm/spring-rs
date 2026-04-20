@@ -124,6 +124,11 @@ struct Args {
     methods: HashSet<Method>,
     debug: bool,
     transform: Option<syn::ExprPath>,
+    /// Optional group tag to bucket handlers when registering via inventory.
+    /// Defaults to `env!("CARGO_PKG_NAME")` when absent — i.e. every crate is its own
+    /// group by default, so plugins can apply middleware to their own routes via
+    /// `add_group_layer` without affecting handlers defined in other crates.
+    group: Option<syn::LitStr>,
 }
 
 impl Args {
@@ -136,6 +141,7 @@ impl Args {
         }
         let mut debug = false;
         let mut transform = None;
+        let mut group = None;
         for meta in args.options {
             match meta {
                 syn::Meta::Path(path) if path.is_ident("debug") => {
@@ -182,12 +188,25 @@ impl Args {
                                 "transform expects string literal path",
                             ));
                         }
+                    } else if nv.path.is_ident("group") {
+                        if let syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(lit),
+                            ..
+                        }) = nv.value.clone()
+                        {
+                            group = Some(lit);
+                        } else {
+                            return Err(syn::Error::new_spanned(
+                                nv.value,
+                                "Attribute group expects literal string",
+                            ));
+                        }
                     } else {
                         let attr = nv.path.to_token_stream();
                         return Err(syn::Error::new_spanned(
                             nv,
                             format!(
-                                "Unknown attribute `{attr}`; allowed: `method = \"METHOD\"`, `transform = \"path::to::fn\"`, `debug`"
+                                "Unknown attribute `{attr}`; allowed: `method = \"METHOD\"`, `transform = \"path::to::fn\"`, `group = \"NAME\"`, `debug`"
                             ),
                         ));
                     }
@@ -209,6 +228,7 @@ impl Args {
             methods,
             debug,
             transform,
+            group,
         })
     }
 }
@@ -443,6 +463,11 @@ impl ToTokens for Route {
             quote! { #ast }
         };
 
+        let group_expr = match args.iter().find_map(|a| a.group.clone()) {
+            Some(lit) => quote!(#lit),
+            None => quote!(env!("CARGO_PKG_NAME")),
+        };
+
         let stream = quote! {
             #(#doc_attributes)*
             #[allow(non_camel_case_types, missing_docs)]
@@ -454,6 +479,10 @@ impl ToTokens for Route {
                     #(#registrations)*
 
                     __router
+                }
+
+                fn group(&self) -> &'static str {
+                    #group_expr
                 }
             }
 

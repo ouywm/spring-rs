@@ -115,12 +115,12 @@ fn add_method_call(call: ExprCall, args: &ConfigArgs) -> Expr {
             attrs: vec![],
             receiver: Box::new(expr),
             dot_token: Default::default(),
-            method: syn::parse_quote!(add_router),
+            method: syn::parse_quote!(add_grouped_routers),
             turbofish: None,
             paren_token: Default::default(),
             args: {
                 let mut punctuated = syn::punctuated::Punctuated::new();
-                punctuated.push(syn::parse_quote!(::summer_web::handler::auto_router()));
+                punctuated.push(syn::parse_quote!(::summer_web::handler::auto_grouped_routers()));
                 punctuated
             },
         });

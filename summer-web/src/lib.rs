@@ -142,6 +142,22 @@ pub type RouterLayer = Arc<dyn Fn(Router) -> Router + Send + Sync>;
 /// Collection of router layers
 pub type RouterLayers = Vec<RouterLayer>;
 
+/// Named groups of routers produced by the `#[post("/...", group = "xxx")]` macros,
+/// keyed by group name.
+///
+/// Populated by [`WebConfigurator::add_grouped_routers`]. [`WebPlugin::schedule`] applies
+/// any group-specific layers registered via [`LayerConfigurator::add_group_layer`] to each
+/// named group router **before** merging it into the main router, so the layer only
+/// affects that group's routes.
+pub type GroupedRoutersByName = std::collections::HashMap<String, Router>;
+
+/// Map of group name → list of layer functions registered via
+/// [`LayerConfigurator::add_group_layer`].
+///
+/// Each layer is applied (in registration order) to the named group router during
+/// [`WebPlugin::schedule`] before merging into the main router.
+pub type GroupLayerMap = std::collections::HashMap<String, Vec<RouterLayer>>;
+
 /// Trait for adding layers to the web router
 pub trait LayerConfigurator {
     /// Add a layer function that will be applied to the router before the server starts.
@@ -158,6 +174,30 @@ pub trait LayerConfigurator {
     /// });
     /// ```
     fn add_router_layer<F>(&mut self, layer: F) -> &mut Self
+    where
+        F: Fn(Router) -> Router + Send + Sync + 'static;
+
+    /// Add a layer that applies **only** to the routes belonging to the given group.
+    ///
+    /// Routes join a group via the `#[post("/...", group = "NAME")]` macro (or its siblings
+    /// for other HTTP methods). Handlers without an explicit `group = "..."` fall back to
+    /// `env!("CARGO_PKG_NAME")`, so each crate is automatically its own group.
+    ///
+    /// The layer is applied during [`WebPlugin::schedule`] to the named group's router
+    /// **before** that router is merged into the main one, so it never leaks to handlers
+    /// in other groups.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use summer_web::LayerConfigurator;
+    ///
+    /// // In your plugin's build method:
+    /// app.add_group_layer("summer-ai-relay", move |router| {
+    ///     router.layer(AiAuthLayer::new(token_store.clone()))
+    /// });
+    /// ```
+    fn add_group_layer<F>(&mut self, group: impl Into<String>, layer: F) -> &mut Self
     where
         F: Fn(Router) -> Router + Send + Sync + 'static;
 }
@@ -179,6 +219,25 @@ impl LayerConfigurator for AppBuilder {
             self.add_component(layers)
         }
     }
+
+    fn add_group_layer<F>(&mut self, group: impl Into<String>, layer: F) -> &mut Self
+    where
+        F: Fn(Router) -> Router + Send + Sync + 'static,
+    {
+        let key = group.into();
+        if let Some(map) = self.get_component_ref::<GroupLayerMap>() {
+            unsafe {
+                let raw_ptr = ComponentRef::into_raw(map);
+                let map = &mut *(raw_ptr as *mut GroupLayerMap);
+                map.entry(key).or_default().push(Arc::new(layer));
+            }
+            self
+        } else {
+            let mut map: GroupLayerMap = std::collections::HashMap::new();
+            map.insert(key, vec![Arc::new(layer)]);
+            self.add_component(map)
+        }
+    }
 }
 
 /// OpenAPI
@@ -189,6 +248,17 @@ type OpenApiTransformer = fn(TransformOpenApi) -> TransformOpenApi;
 pub trait WebConfigurator {
     /// add route to app registry
     fn add_router(&mut self, router: Router) -> &mut Self;
+
+    /// Register a bucketed set of routers produced by
+    /// [`crate::handler::auto_grouped_routers`].
+    ///
+    /// - `grouped.default` goes through the existing [`Self::add_router`] pipeline
+    ///   (merged into the main router inside [`WebPlugin::build`]).
+    /// - `grouped.by_group` is stored separately in a [`GroupedRoutersByName`] component
+    ///   so that [`WebPlugin::schedule`] can apply any group-specific layers — registered
+    ///   via [`LayerConfigurator::add_group_layer`] — before merging each named group
+    ///   into the main router.
+    fn add_grouped_routers(&mut self, grouped: crate::handler::GroupedRouters) -> &mut Self;
 
     /// Initialize OpenAPI Documents
     #[cfg(feature = "openapi")]
@@ -210,6 +280,31 @@ impl WebConfigurator for AppBuilder {
             self
         } else {
             self.add_component(vec![router])
+        }
+    }
+
+    fn add_grouped_routers(&mut self, grouped: crate::handler::GroupedRouters) -> &mut Self {
+        // default bucket → existing Routers list (merged together inside WebPlugin::build)
+        self.add_router(grouped.default);
+
+        // by_group bucket → GroupedRoutersByName component; merge on collisions so
+        // multiple `add_grouped_routers` calls accumulate correctly.
+        if grouped.by_group.is_empty() {
+            return self;
+        }
+
+        if let Some(existing) = self.get_component_ref::<GroupedRoutersByName>() {
+            unsafe {
+                let raw = ComponentRef::into_raw(existing);
+                let existing = &mut *(raw as *mut GroupedRoutersByName);
+                for (name, router) in grouped.by_group {
+                    let prev = existing.remove(&name).unwrap_or_else(Router::new);
+                    existing.insert(name, prev.merge(router));
+                }
+            }
+            self
+        } else {
+            self.add_component(grouped.by_group)
         }
     }
 
@@ -285,16 +380,33 @@ impl WebPlugin {
     async fn schedule(app: Arc<App>, config: ServerConfig) -> Result<String> {
         let mut router = app.get_expect_component::<Router>();
 
-        // Apply custom router layers registered by plugins
-        // This is done in schedule() after all plugins have built,
-        // ensuring plugins that depend on other plugins can still register layers
+        // 1. Apply per-group layers and merge each named group into the main router.
+        //    Done here (not in WebPlugin::build) because other plugins may register
+        //    group layers via `add_group_layer` AFTER WebPlugin::build runs — they only
+        //    need to depend on WebPlugin to see their named routers, not to register layers.
+        if let Some(groups) = app.get_component_ref::<GroupedRoutersByName>() {
+            let group_layers = app.get_component_ref::<GroupLayerMap>();
+            for (name, group_router) in groups.deref().iter() {
+                let mut gr = group_router.to_owned();
+                if let Some(ref layers_map) = group_layers {
+                    if let Some(layer_list) = layers_map.deref().get(name) {
+                        for layer_fn in layer_list.iter() {
+                            gr = layer_fn(gr);
+                        }
+                    }
+                }
+                router = router.merge(gr);
+            }
+        }
+
+        // 2. Apply global router layers registered via `add_router_layer`.
         if let Some(layers) = app.get_component_ref::<RouterLayers>() {
             for layer_fn in layers.deref().iter() {
                 router = layer_fn(router);
             }
         }
 
-        // 2. bind tcp listener
+        // 3. bind tcp listener
         let addr = SocketAddr::from((config.binding, config.port));
         let listener = tokio::net::TcpListener::bind(addr)
             .await
@@ -354,24 +466,49 @@ pub fn enable_openapi() {
 }
 
 #[cfg(feature = "socket_io")]
-pub fn enable_socketio(socketio_config: SocketIOConfig, app: &mut AppBuilder, router: Router) -> Router {
-    tracing::info!("Configuring SocketIO with namespace: {}", socketio_config.default_namespace);
-    
-    let (layer, io) = socketioxide::SocketIo::builder()
-        .build_layer();
-    
+pub fn enable_socketio(
+    socketio_config: SocketIOConfig,
+    app: &mut AppBuilder,
+    router: Router,
+) -> Router {
+    let mut socketio_config = socketio_config;
+    socketio_config.normalize();
+
+    tracing::info!(
+        "Configuring SocketIO with namespace: {} and request path: {}",
+        socketio_config.default_namespace,
+        socketio_config.request_path,
+    );
+
+    let request_path = socketio_config.request_path.clone();
+    let request_path_with_slash = if request_path == "/" {
+        None
+    } else {
+        Some(format!("{request_path}/"))
+    };
+
+    let (svc, io) = socketioxide::SocketIo::builder()
+        .req_path(request_path.clone())
+        .build_svc();
+
     let ns_path = socketio_config.default_namespace.clone();
     let ns_path_for_closure = ns_path.clone();
     io.ns(ns_path, move |socket: socketioxide::extract::SocketRef| async move {
         use summer::tracing::info;
-        
+
         info!(socket_id = ?socket.id, "New socket connected to namespace: {}", ns_path_for_closure);
-        
+
         crate::handler::auto_socketio_setup(&socket);
     });
-    
+
     app.add_component(io);
-    router.layer(layer)
+
+    let router = router.route_service(&request_path, svc.clone());
+    if let Some(request_path_with_slash) = request_path_with_slash {
+        router.route_service(&request_path_with_slash, svc)
+    } else {
+        router
+    }
 }
 
 #[cfg(feature = "openapi")]

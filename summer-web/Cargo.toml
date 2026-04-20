@@ -53,7 +53,7 @@ byte-unit = { workspace = true, features = ["serde"] }
 schemars = { workspace = true }
 indexmap = { workspace = true }
 inventory = { workspace = true }
-socketioxide = { workspace = true, optional = true, features = ["tracing"] }
+socketioxide = { workspace = true, optional = true, features = ["tracing", "extensions"] }
 rmpv = { workspace = true, optional = true, features = ["with-serde"] }
 aide = { workspace = true, optional = true }
 
