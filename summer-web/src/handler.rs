@@ -114,6 +114,35 @@ pub fn auto_grouped_routers() -> GroupedRouters {
     GroupedRouters { default, by_group }
 }
 
+/// Collect routes for a crate group.
+///
+/// Returns an empty `Router` if the group doesn't exist or has no handlers.
+/// This is useful for crates that want to collect their own routes and apply
+/// their own middleware/layers without writing manual `router()` functions.
+///
+/// # Example
+///
+/// ```ignore
+/// // In your crate's router module:
+/// use summer_web::handler::grouped_router;
+///
+/// pub fn router() -> Router {
+///     grouped_router("my-crate-group")
+/// }
+/// ```
+pub fn grouped_router(group: &str) -> Router {
+    #[cfg(feature = "openapi")]
+    crate::enable_openapi();
+
+    let mut router = Router::new();
+    for handler in inventory::iter::<&dyn TypedHandlerRegistrar> {
+        if handler.group() == group {
+            router = handler.install_route(router);
+        }
+    }
+    router
+}
+
 #[cfg(feature = "socket_io")]
 pub trait SocketIOHandlerRegistrar: Send + Sync + 'static {
     fn install_socketio_handlers(&self, socket: &crate::socketioxide::extract::SocketRef);
