@@ -11,10 +11,15 @@ mod prelude;
 pub mod storage;
 
 use crate::config::SaTokenConfig as summerSaTokenConfig;
+use sa_token_adapter::storage::SaStorage;
+use sa_token_plugin_axum::SaTokenState;
+#[cfg(feature = "with-web")]
+use sa_token_plugin_axum::SaTokenLayer;
+#[cfg(all(feature = "memory", not(feature = "with-summer-redis")))]
+use sa_token_storage_memory::MemoryStorage;
 use summer::app::AppBuilder;
 use summer::async_trait;
 use summer::config::ConfigRegistry;
-#[cfg(feature = "with-web")]
 use summer::plugin::ComponentRegistry;
 use summer::plugin::{MutableComponentRegistry, Plugin};
 #[cfg(feature = "with-web")]

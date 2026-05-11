@@ -45,7 +45,8 @@ impl From<SaTokenStorage> for Arc<dyn SaStorage> {
 ///
 /// ```rust,ignore
 /// use summer::plugin::service::Service;
-/// use summer_sa_token::{lazy_storage, SaStorage, SaTokenConfigurator};
+/// use summer_sa_token::sa_token_plugin_axum::SaStorage;
+/// use summer_sa_token::{lazy_storage, SaTokenConfigurator};
 ///
 /// // Define your storage as a Service - DbConn is auto-injected
 /// #[derive(Clone, Service)]

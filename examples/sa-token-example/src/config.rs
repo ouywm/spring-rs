@@ -4,7 +4,8 @@
 //! and provides a custom SeaORM-based storage implementation.
 
 use summer::app::AppBuilder;
-use summer_sa_token::{lazy_storage, PathAuthBuilder, SaStorage, SaTokenConfigurator};
+use summer_sa_token::sa_token_plugin_axum::SaStorage;
+use summer_sa_token::{lazy_storage, PathAuthBuilder, SaTokenConfigurator};
 use std::sync::Arc;
 use crate::sea_orm_storage::SeaOrmStorage;
 

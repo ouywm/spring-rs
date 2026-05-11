@@ -1,9 +1,10 @@
 use anyhow::Context;
 use summer::{auto_config, App};
+use summer_sa_token::sa_token_plugin_axum::{LoginIdExtractor, SaTokenState, StpUtil};
 use summer_sa_token::{
     sa_check_login, sa_check_permission, sa_check_permissions_and, sa_check_permissions_or,
-    sa_check_role, sa_check_roles_and, sa_check_roles_or, sa_ignore, LoginIdExtractor,
-    SaTokenAuthConfigurator, SaTokenPlugin, SaTokenState, StpUtil,
+    sa_check_role, sa_check_roles_and, sa_check_roles_or, sa_ignore, SaTokenAuthConfigurator,
+    SaTokenPlugin,
 };
 use summer_sea_orm::SeaOrmPlugin;
 use summer_web::extractor::Component;

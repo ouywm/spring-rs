@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use summer::app::AppBuilder;
 use summer::async_trait;
 use summer::plugin::{ComponentRegistry, MutableComponentRegistry, Plugin};
-use summer_sa_token::{OptionalSaTokenExtractor, SaStorage, SaTokenLayer, SaTokenState, StpUtil};
+use summer_sa_token::sa_token_plugin_axum::{
+    OptionalSaTokenExtractor, SaStorage, SaTokenLayer, SaTokenState, StpUtil,
+};
 use summer_web::axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -30,7 +32,7 @@ struct TestSaTokenPlugin;
 impl Plugin for TestSaTokenPlugin {
     async fn build(&self, app: &mut AppBuilder) {
         let state = SaTokenState::builder()
-            .storage(std::sync::Arc::new(summer_sa_token::MemoryStorage::new()))
+            .storage(std::sync::Arc::new(summer_sa_token::sa_token_plugin_axum::MemoryStorage::new()))
             .token_name("Authorization".to_string())
             .timeout(3600)
             .build();

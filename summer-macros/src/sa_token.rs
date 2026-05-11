@@ -47,7 +47,7 @@ pub fn sa_check_login_impl(_attr: TokenStream, item: TokenStream) -> TokenStream
     }
 
     let check_code = quote! {
-        if !summer_sa_token::StpUtil::is_login_current() {
+        if !summer_sa_token::sa_token_plugin_axum::StpUtil::is_login_current() {
             return Err(summer_web::error::KnownWebError::unauthorized("Not logged in").into());
         }
     };
@@ -94,10 +94,10 @@ pub fn sa_check_role_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let check_code = quote! {
-        let __login_id = summer_sa_token::StpUtil::get_login_id_as_string()
+        let __login_id = summer_sa_token::sa_token_plugin_axum::StpUtil::get_login_id_as_string()
             .await
             .map_err(|_| summer_web::error::KnownWebError::unauthorized("Not logged in"))?;
-        if !summer_sa_token::StpUtil::has_role(&__login_id, #role_value).await {
+        if !summer_sa_token::sa_token_plugin_axum::StpUtil::has_role(&__login_id, #role_value).await {
             return Err(summer_web::error::KnownWebError::forbidden(
                 format!("Missing required role: {}", #role_value)
             ).into());
@@ -153,10 +153,10 @@ pub fn sa_check_permission_impl(attr: TokenStream, item: TokenStream) -> TokenSt
     }
 
     let check_code = quote! {
-        let __login_id = summer_sa_token::StpUtil::get_login_id_as_string()
+        let __login_id = summer_sa_token::sa_token_plugin_axum::StpUtil::get_login_id_as_string()
             .await
             .map_err(|_| summer_web::error::KnownWebError::unauthorized("Not logged in"))?;
-        if !summer_sa_token::StpUtil::has_permission(&__login_id, #perm_value).await {
+        if !summer_sa_token::sa_token_plugin_axum::StpUtil::has_permission(&__login_id, #perm_value).await {
             return Err(summer_web::error::KnownWebError::forbidden(
                 format!("Missing required permission: {}", #perm_value)
             ).into());
@@ -206,7 +206,7 @@ pub fn sa_check_roles_and_impl(attr: TokenStream, item: TokenStream) -> TokenStr
     let role_values: Vec<String> = roles.iter().map(|r| r.value()).collect();
     let role_checks = role_values.iter().map(|role| {
         quote! {
-            if !summer_sa_token::StpUtil::has_role(&__login_id, #role).await {
+            if !summer_sa_token::sa_token_plugin_axum::StpUtil::has_role(&__login_id, #role).await {
                 return Err(summer_web::error::KnownWebError::forbidden(
                     format!("Missing required role: {}", #role)
                 ).into());
@@ -215,7 +215,7 @@ pub fn sa_check_roles_and_impl(attr: TokenStream, item: TokenStream) -> TokenStr
     });
 
     let check_code = quote! {
-        let __login_id = summer_sa_token::StpUtil::get_login_id_as_string()
+        let __login_id = summer_sa_token::sa_token_plugin_axum::StpUtil::get_login_id_as_string()
             .await
             .map_err(|_| summer_web::error::KnownWebError::unauthorized("Not logged in"))?;
         #(#role_checks)*
@@ -264,7 +264,7 @@ pub fn sa_check_roles_or_impl(attr: TokenStream, item: TokenStream) -> TokenStre
     let role_values: Vec<String> = roles.iter().map(|r| r.value()).collect();
     let role_checks = role_values.iter().map(|role| {
         quote! {
-            if summer_sa_token::StpUtil::has_role(&__login_id, #role).await {
+            if summer_sa_token::sa_token_plugin_axum::StpUtil::has_role(&__login_id, #role).await {
                 __has_any_role = true;
             }
         }
@@ -273,7 +273,7 @@ pub fn sa_check_roles_or_impl(attr: TokenStream, item: TokenStream) -> TokenStre
     let roles_str = role_values.join(", ");
 
     let check_code = quote! {
-        let __login_id = summer_sa_token::StpUtil::get_login_id_as_string()
+        let __login_id = summer_sa_token::sa_token_plugin_axum::StpUtil::get_login_id_as_string()
             .await
             .map_err(|_| summer_web::error::KnownWebError::unauthorized("Not logged in"))?;
         let mut __has_any_role = false;
@@ -332,7 +332,7 @@ pub fn sa_check_permissions_and_impl(attr: TokenStream, item: TokenStream) -> To
     let perm_values: Vec<String> = permissions.iter().map(|p| p.value()).collect();
     let perm_checks = perm_values.iter().map(|perm| {
         quote! {
-            if !summer_sa_token::StpUtil::has_permission(&__login_id, #perm).await {
+            if !summer_sa_token::sa_token_plugin_axum::StpUtil::has_permission(&__login_id, #perm).await {
                 return Err(summer_web::error::KnownWebError::forbidden(
                     format!("Missing required permission: {}", #perm)
                 ).into());
@@ -341,7 +341,7 @@ pub fn sa_check_permissions_and_impl(attr: TokenStream, item: TokenStream) -> To
     });
 
     let check_code = quote! {
-        let __login_id = summer_sa_token::StpUtil::get_login_id_as_string()
+        let __login_id = summer_sa_token::sa_token_plugin_axum::StpUtil::get_login_id_as_string()
             .await
             .map_err(|_| summer_web::error::KnownWebError::unauthorized("Not logged in"))?;
         #(#perm_checks)*
@@ -394,7 +394,7 @@ pub fn sa_check_permissions_or_impl(attr: TokenStream, item: TokenStream) -> Tok
     let perm_values: Vec<String> = permissions.iter().map(|p| p.value()).collect();
     let perm_checks = perm_values.iter().map(|perm| {
         quote! {
-            if summer_sa_token::StpUtil::has_permission(&__login_id, #perm).await {
+            if summer_sa_token::sa_token_plugin_axum::StpUtil::has_permission(&__login_id, #perm).await {
                 __has_any_perm = true;
             }
         }
@@ -403,7 +403,7 @@ pub fn sa_check_permissions_or_impl(attr: TokenStream, item: TokenStream) -> Tok
     let perms_str = perm_values.join(", ");
 
     let check_code = quote! {
-        let __login_id = summer_sa_token::StpUtil::get_login_id_as_string()
+        let __login_id = summer_sa_token::sa_token_plugin_axum::StpUtil::get_login_id_as_string()
             .await
             .map_err(|_| summer_web::error::KnownWebError::unauthorized("Not logged in"))?;
         let mut __has_any_perm = false;

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.2
+
+> Contains **breaking** changes to the public API surface. Pin to `=0.5.1` if you cannot migrate immediately.
+
+- **breaking**: trim `prelude` re-exports. Upstream sa-token types are now reachable only through the `summer_sa_token::sa_token_plugin_axum` namespace (e.g. `StpUtil`, `SaTokenState`, `SaTokenLayer`, `SaStorage`, `LoginIdExtractor`, `OptionalSaTokenExtractor`, `MemoryStorage`). The short `summer_sa_token::StpUtil` style paths are gone.
+- **breaking**: `summer_sa_token::sa_token_adapter` namespace re-export removed. Use `summer_sa_token::sa_token_plugin_axum::sa_token_adapter` instead (plugin-axum already re-exports the adapter crate).
+- **changed**: require `summer-macros >= 0.5.3` for the updated proc-macro path; later compatible 0.5.x macro releases are accepted automatically.
+- **changed**: bump `sa-token-plugin-axum` / `sa-token-core` / `sa-token-adapter` / `sa-token-storage-memory` from `0.1.12` to `0.1.15`.
+- **fixed**: `ComponentRegistry` import was incorrectly gated by `#[cfg(feature = "with-web")]`, which broke `--no-default-features --features memory` builds.
+
+### Migration
+
+| Before                                                  | After                                                                       |
+| ------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `use summer_sa_token::StpUtil;`                         | `use summer_sa_token::sa_token_plugin_axum::StpUtil;`                       |
+| `use summer_sa_token::SaTokenState;`                    | `use summer_sa_token::sa_token_plugin_axum::SaTokenState;`                  |
+| `use summer_sa_token::SaTokenLayer;`                    | `use summer_sa_token::sa_token_plugin_axum::SaTokenLayer;`                  |
+| `use summer_sa_token::SaStorage;`                       | `use summer_sa_token::sa_token_plugin_axum::SaStorage;`                     |
+| `use summer_sa_token::LoginIdExtractor;`                | `use summer_sa_token::sa_token_plugin_axum::LoginIdExtractor;`              |
+| `use summer_sa_token::OptionalSaTokenExtractor;`        | `use summer_sa_token::sa_token_plugin_axum::OptionalSaTokenExtractor;`      |
+| `use summer_sa_token::MemoryStorage;`                   | `use summer_sa_token::sa_token_plugin_axum::MemoryStorage;`                 |
+| `use summer_sa_token::sa_token_adapter::storage::*;`    | `use summer_sa_token::sa_token_plugin_axum::sa_token_adapter::storage::*;`  |
+
+Symbols that remain at `summer_sa_token::*`: `SaTokenPlugin`, `SaTokenConfig`, `CoreConfig`, `TokenStyle`, `PathAuthBuilder`, `SaTokenConfigurator`, `SaTokenAuthConfigurator`, `lazy_storage`, and the eight `#[sa_check_*]` / `#[sa_ignore]` macros.
+
 ## 0.5.1
 
 - **added**: support `storage_prefix` for `with-summer-redis`, allowing Redis key namespacing such as `demo:sa:login:token:admin` ([#235])
