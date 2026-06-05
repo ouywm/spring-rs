@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
-use summer::config::Configurable;
 use std::net::{IpAddr, Ipv4Addr};
+use summer::config::Configurable;
 use tracing::Level;
 
 summer::submit_config_schema!("web", WebConfig);
@@ -15,7 +15,10 @@ summer::submit_config_schema!("socket_io", SocketIOConfig);
 pub struct WebConfig {
     #[serde(flatten)]
     pub(crate) server: ServerConfig,
+    /// Omitted in TOML when all fields use their defaults (common in tests where
+    /// `summer-web/openapi` is pulled in transitively, e.g. via `summer-macros`).
     #[cfg(feature = "openapi")]
+    #[serde(default)]
     pub(crate) openapi: OpenApiConfig,
     pub(crate) middlewares: Option<Middlewares>,
 }
@@ -23,15 +26,15 @@ pub struct WebConfig {
 #[derive(Debug, Clone, JsonSchema, Deserialize)]
 pub struct ServerConfig {
     #[serde(default = "default_binding")]
-    pub(crate) binding: IpAddr,
+    pub binding: IpAddr,
     #[serde(default = "default_port")]
-    pub(crate) port: u16,
+    pub port: u16,
     #[serde(default)]
-    pub(crate) connect_info: bool,
+    pub connect_info: bool,
     #[serde(default = "default_true")]
-    pub(crate) graceful: bool,
+    pub graceful: bool,
     #[serde(default)]
-    pub(crate) global_prefix: String,
+    pub global_prefix: String,
 }
 
 #[cfg(feature = "openapi")]
@@ -41,6 +44,16 @@ pub struct OpenApiConfig {
     pub(crate) doc_prefix: String,
     #[serde(default)]
     pub(crate) info: aide::openapi::Info,
+}
+
+#[cfg(feature = "openapi")]
+impl Default for OpenApiConfig {
+    fn default() -> Self {
+        Self {
+            doc_prefix: default_doc_prefix(),
+            info: aide::openapi::Info::default(),
+        }
+    }
 }
 
 /// Normalize a URL prefix: ensure it starts with '/' and does not end with '/'.

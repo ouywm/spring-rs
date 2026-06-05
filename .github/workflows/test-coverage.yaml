@@ -18,6 +18,12 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v4
 
+      - name: Checkout contrib-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: summer-rs/contrib-plugins
+          path: contrib-plugins
+
       - name: Install protoc
         run: |
           sudo apt-get update
@@ -47,6 +53,12 @@ jobs:
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
+
+      - name: Checkout contrib-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: summer-rs/contrib-plugins
+          path: contrib-plugins
 
       - name: Install protoc
         run: |
@@ -106,6 +118,12 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v4
 
+      - name: Checkout contrib-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: summer-rs/contrib-plugins
+          path: contrib-plugins
+
       - name: Install protoc (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -131,7 +149,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           # Test all default workspace members except summer-stream (rdkafka-sys not supported on Windows)
-          cargo test --lib -p summer -p summer-macros -p summer-web -p summer-grpc -p summer-job -p summer-redis -p summer-sqlx -p summer-postgres -p summer-sea-orm -p summer-mail -p summer-opentelemetry -p summer-opendal -p summer-apalis
+          cargo test --lib -p summer -p summer-macros -p summer-web -p summer-grpc -p summer-job -p summer-redis -p summer-sqlx -p summer-postgres -p summer-sea-orm -p summer-mail -p summer-opentelemetry -p summer-apalis
 
   integration-tests:
     name: Integration Tests
@@ -164,6 +182,12 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v4
 
+      - name: Checkout contrib-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: summer-rs/contrib-plugins
+          path: contrib-plugins
+
       - name: Install protoc
         run: |
           sudo apt-get update
@@ -184,6 +208,12 @@ jobs:
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
+
+      - name: Checkout contrib-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: summer-rs/contrib-plugins
+          path: contrib-plugins
 
       - name: Install protoc
         run: |

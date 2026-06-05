@@ -35,7 +35,7 @@ tokio = "1"
 ## Write code
 
 ```rust
-{{ include_code(path="../../examples/hello-world-example/src/main.rs") }}
+{{ include_code(path="../../examples/getting-started/hello-world-example/src/main.rs") }}
 ```
 
 ## Configure the application
@@ -54,7 +54,7 @@ uri = "mysql://user:password@127.0.0.1:3306"
 
 `summer-rs` supports multiple environment configurations: dev (development), test (testing), and prod (production), corresponding to the three configuration files `app-dev.toml`, `app-test.toml`, and `app-prod.toml`. The configuration in the environment configuration file will override the configuration items of the `app.toml` main configuration file.
 
-`summer-rs` will activate the configuration file of the corresponding environment according to the `summer_ENV` environment variable.
+`summer-rs` will activate the configuration file of the corresponding environment according to the `SUMMER_ENV` environment variable.
 
 ## Run
 

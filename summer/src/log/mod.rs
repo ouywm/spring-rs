@@ -1,26 +1,22 @@
 #![doc = include_str!("../../Log-Plugin.md")]
+mod bootstrap;
 mod config;
+
+pub use bootstrap::install_bootstrap_logger;
+pub use bootstrap::BoxLayer;
+pub(crate) use config::{LogLevel, LoggerConfig};
 
 use crate::app::AppBuilder;
 use crate::config::ConfigRegistry;
 use crate::plugin::Plugin;
-use config::{Format, LogLevel, LoggerConfig, TimeStyle, WithFields};
-use nu_ansi_term::Color;
+use config::{Format, TimeStyle, WithFields};
 use std::sync::OnceLock;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::fmt::time::{ChronoLocal, ChronoUtc, FormatTime, SystemTime, Uptime};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Registry;
-use tracing_subscriber::{
-    fmt::{self, MakeWriter},
-    Layer,
-};
-
-/// Boxed [Tracing Layer](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/layer/index.html)
-pub type BoxLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
+use tracing_subscriber::Layer;
+use tracing_subscriber::fmt::{self, MakeWriter};
 
 /// Built-in Log plugin based on [tracing](https://docs.rs/tracing)
 pub(crate) struct LogPlugin;
@@ -31,20 +27,6 @@ impl Plugin for LogPlugin {
             .get_config::<LoggerConfig>()
             .expect("tracing plugin config load failed");
 
-        if config.enable {
-            let level = match config.level {
-                LogLevel::Off => Color::LightRed.paint("Disabled"),
-                LogLevel::Trace => Color::Purple.paint("TRACE"),
-                LogLevel::Debug => Color::Blue.paint("DEBUG"),
-                LogLevel::Info => Color::Green.paint("INFO "),
-                LogLevel::Warn => Color::Yellow.paint("WARN "),
-                LogLevel::Error => Color::Red.paint("ERROR"),
-            };
-            println!("     logger: {level}\n");
-        } else {
-            println!("     logger: {}\n", Color::LightRed.paint("Disabled"));
-        }
-
         if config.pretty_backtrace {
             std::env::set_var("RUST_BACKTRACE", "1");
             log::warn!(
@@ -52,19 +34,35 @@ impl Plugin for LogPlugin {
             );
         }
 
+        // Compose the user-configured layer stack and push `ErrorLayer`
+        // onto the end so backtrace context is captured.
         let layers = std::mem::take(&mut app.layers);
-        let layers = config.config_subscriber(layers);
-
+        let mut user_layers = config.config_subscriber(layers);
+        user_layers.push(Box::new(ErrorLayer::default()));
         let env_filter = config.build_env_filter();
 
-        // try_init() instead of init() to handle cases where the global subscriber
-        // has already been set (e.g., in test environments with multiple App instances)
-        // This is the correct approach as tracing subscriber is a process-wide singleton
-        let _ = tracing_subscriber::registry()
-            .with(layers)
-            .with(env_filter)
-            .with(ErrorLayer::default())
-            .try_init();
+        // Hot-swap both reload slots that `install_bootstrap_logger`
+        // wired up. The global dispatcher is already in place, so we
+        // never call `set_global_default` again.
+        let mut hot_swapped = false;
+        if let Some(handle) = bootstrap::LAYER_RELOAD_HANDLE.get() {
+            match handle.modify(|slot| *slot = user_layers) {
+                Ok(()) => hot_swapped = true,
+                Err(e) => eprintln!("LogPlugin: layer reload failed: {e:?}"),
+            }
+        }
+        if let Some(handle) = bootstrap::FILTER_RELOAD_HANDLE.get() {
+            if let Err(e) = handle.modify(|slot| *slot = env_filter) {
+                eprintln!("LogPlugin: filter reload failed: {e:?}");
+            }
+        }
+
+        if hot_swapped {
+            // Callsites encountered during the bootstrap window cached
+            // their `Interest` against the placeholder filter; rebuild
+            // so the new user filter applies retroactively.
+            tracing::callsite::rebuild_interest_cache();
+        }
     }
 
     fn immediately(&self) -> bool {

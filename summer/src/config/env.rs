@@ -20,7 +20,7 @@ pub enum Env {
 }
 
 impl Env {
-    /// Initializes environment variables from the `.env` file and reads `summer_ENV` to determine the active environment for the application.
+    /// Initializes environment variables from the `.env` file and reads `SUMMER_ENV` to determine the active environment for the application.
     pub fn init() -> Self {
         // Miri runs with filesystem isolation; `dotenvy` uses `getcwd`, which is unsupported there.
         #[cfg(not(miri))]
@@ -36,10 +36,10 @@ impl Env {
         Self::from_env()
     }
 
-    /// Read `summer_ENV` to determine the environment of the active application.
-    /// If there is no `summer_ENV` variable, it defaults to Dev
+    /// Read `SUMMER_ENV` to determine the environment of the active application.
+    /// If there is no `SUMMER_ENV` variable, it defaults to Dev
     pub fn from_env() -> Self {
-        match env::var("summer_ENV") {
+        match env::var("SUMMER_ENV") {
             Ok(var) => Self::from_string(var),
             Err(_) => Self::Dev,
         }
@@ -164,25 +164,25 @@ mod tests {
         let foo = temp_dir.join("foo.toml");
         let _ = touch(&foo);
 
-        std::env::set_var("summer_ENV", "dev");
+        std::env::set_var("SUMMER_ENV", "dev");
         assert_eq!(
             Env::from_env().get_config_path(foo.as_path())?,
             temp_dir.join("foo-dev.toml")
         );
 
-        std::env::set_var("summer_ENV", "TEST");
+        std::env::set_var("SUMMER_ENV", "TEST");
         assert_eq!(
             Env::from_env().get_config_path(foo.as_path())?,
             temp_dir.join("foo-test.toml")
         );
 
-        std::env::set_var("summer_ENV", "Prod");
+        std::env::set_var("SUMMER_ENV", "Prod");
         assert_eq!(
             Env::from_env().get_config_path(foo.as_path())?,
             temp_dir.join("foo-prod.toml")
         );
 
-        std::env::set_var("summer_ENV", "Other");
+        std::env::set_var("SUMMER_ENV", "Other");
         assert_eq!(
             Env::from_env().get_config_path(foo.as_path())?,
             temp_dir.join("foo-dev.toml")
