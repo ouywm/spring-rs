@@ -20,7 +20,7 @@ pub mod problem_details;
 pub use summer_macros::ProblemDetails;
 
 #[cfg(feature = "socket_io")]
-pub use { socketioxide, rmpv };
+pub use {rmpv, socketioxide};
 
 pub use axum;
 pub use summer::async_trait;
@@ -99,6 +99,7 @@ use anyhow::Context;
 use axum::Extension;
 use config::ServerConfig;
 use config::WebConfig;
+use std::{net::SocketAddr, ops::Deref, sync::Arc};
 use summer::plugin::component::ComponentRef;
 use summer::plugin::ComponentRegistry;
 use summer::plugin::MutableComponentRegistry;
@@ -106,9 +107,9 @@ use summer::{
     app::{App, AppBuilder},
     config::ConfigRegistry,
     error::Result,
+    event::EventPublisher,
     plugin::Plugin,
 };
-use std::{net::SocketAddr, ops::Deref, sync::Arc};
 
 #[cfg(feature = "socket_io")]
 use config::SocketIOConfig;
@@ -330,81 +331,124 @@ pub struct AppState {
 /// Web Plugin Definition
 pub struct WebPlugin;
 
+pub use summer::event::{ServerProtocol, ServerStartedEvent};
+
 #[async_trait]
 impl Plugin for WebPlugin {
     async fn build(&self, app: &mut AppBuilder) {
-        let mut config = app
-            .get_config::<WebConfig>()
-            .expect("web plugin config load failed");
-
-        config.normalize_prefixes();
-
-        #[cfg(feature = "socket_io")]
-        let socketio_config = app.get_config::<SocketIOConfig>().ok();
-
-        // 1. collect router
-        let routers = app.get_component_ref::<Routers>();
-        let mut router: Router = match routers {
-            Some(rs) => {
-                let mut router = Router::new();
-                for r in rs.deref().iter() {
-                    router = router.merge(r.to_owned());
-                }
-                router
-            }
-            None => Router::new(),
-        };
-        if let Some(middlewares) = config.middlewares {
-            router = crate::middleware::apply_middleware(router, middlewares);
-        }
-
-        #[cfg(feature = "socket_io")]
-        if let Some(socketio_config) = socketio_config {
-            router =  enable_socketio(socketio_config, app, router);
-        }
-
-        app.add_component(router);
-
-        let server_conf = config.server;
-        #[cfg(feature = "openapi")]
-        {
-            let openapi_conf = config.openapi;
-            app.add_component(openapi_conf.clone());
-        }
-
+        let server_conf = assemble_router(app).await;
         app.add_scheduler(move |app: Arc<App>| Box::new(Self::schedule(app, server_conf)));
     }
 }
 
-impl WebPlugin {
-    async fn schedule(app: Arc<App>, config: ServerConfig) -> Result<String> {
-        let mut router = app.get_expect_component::<Router>();
+/// Build the merged axum router from registered [`Routers`], apply configured
+/// middleware (and optional Socket.IO layer), store the resulting [`Router`] and
+/// (when the `openapi` feature is enabled) [`OpenApiConfig`] as components, and
+/// return the [`ServerConfig`] for the caller to use (e.g. binding a TCP listener
+/// or constructing a [`axum_test::TestServer`] in tests).
+///
+/// This is the build-phase half of [`WebPlugin`]; downstream test crates can call
+/// it from a custom plugin to share the exact same router assembly.
+pub async fn assemble_router(app: &mut AppBuilder) -> ServerConfig {
+    let mut config = app
+        .get_config::<WebConfig>()
+        .expect("web plugin config load failed");
 
-        // 1. Apply per-group layers and merge each named group into the main router.
-        //    Done here (not in WebPlugin::build) because other plugins may register
-        //    group layers via `add_group_layer` AFTER WebPlugin::build runs — they only
-        //    need to depend on WebPlugin to see their named routers, not to register layers.
-        if let Some(groups) = app.get_component_ref::<GroupedRoutersByName>() {
-            let group_layers = app.get_component_ref::<GroupLayerMap>();
-            for (name, group_router) in groups.deref().iter() {
-                let mut gr = group_router.to_owned();
-                if let Some(ref layers_map) = group_layers {
-                    if let Some(layer_list) = layers_map.deref().get(name) {
-                        for layer_fn in layer_list.iter() {
-                            gr = layer_fn(gr);
-                        }
+    config.normalize_prefixes();
+
+    #[cfg(feature = "socket_io")]
+    let socketio_config = app.get_config::<SocketIOConfig>().ok();
+
+    // 1. collect router
+    let routers = app.get_component_ref::<Routers>();
+    let mut router: Router = match routers {
+        Some(rs) => {
+            let mut router = Router::new();
+            for r in rs.deref().iter() {
+                router = router.merge(r.to_owned());
+            }
+            router
+        }
+        None => Router::new(),
+    };
+    if let Some(middlewares) = config.middlewares {
+        router = crate::middleware::apply_middleware(router, middlewares);
+    }
+
+    #[cfg(feature = "socket_io")]
+    if let Some(socketio_config) = socketio_config {
+        router = enable_socketio(socketio_config, app, router);
+    }
+
+    app.add_component(router);
+
+    let server_conf = config.server;
+    #[cfg(feature = "openapi")]
+    {
+        let openapi_conf = config.openapi;
+        app.add_component(openapi_conf.clone());
+    }
+
+    server_conf
+}
+
+/// Finalize the router stored by [`assemble_router`]: apply registered
+/// [`RouterLayers`], finish OpenAPI documents (with the `openapi` feature),
+/// inject the [`AppState`] extension, and wrap the result under `global_prefix`
+/// when non-empty.
+///
+/// Returns a fully-prepared [`axum::Router`] ready to be served (production)
+/// or wrapped in a test transport such as [`axum_test::TestServer`].
+pub fn finalize_router(app: &Arc<App>, global_prefix: &str) -> axum::Router {
+    let mut router = app.get_expect_component::<Router>();
+
+    // Apply per-group layers and merge each named group into the main router.
+    // Done here (not in WebPlugin::build) because other plugins may register
+    // group layers via `add_group_layer` AFTER WebPlugin::build runs — they only
+    // need to depend on WebPlugin to see their named routers, not to register layers.
+    if let Some(groups) = app.get_component_ref::<GroupedRoutersByName>() {
+        let group_layers = app.get_component_ref::<GroupLayerMap>();
+        for (name, group_router) in groups.deref().iter() {
+            let mut gr = group_router.to_owned();
+            if let Some(ref layers_map) = group_layers {
+                if let Some(layer_list) = layers_map.deref().get(name) {
+                    for layer_fn in layer_list.iter() {
+                        gr = layer_fn(gr);
                     }
                 }
-                router = router.merge(gr);
             }
+            router = router.merge(gr);
         }
+    }
 
-        // 2. Apply global router layers registered via `add_router_layer`.
-        if let Some(layers) = app.get_component_ref::<RouterLayers>() {
-            for layer_fn in layers.deref().iter() {
-                router = layer_fn(router);
-            }
+    // Apply custom router layers registered by plugins
+    // This is done after all plugins have built,
+    // ensuring plugins that depend on other plugins can still register layers
+    if let Some(layers) = app.get_component_ref::<RouterLayers>() {
+        for layer_fn in layers.deref().iter() {
+            router = layer_fn(router);
         }
+    }
+
+    #[cfg(feature = "openapi")]
+    let router = {
+        let openapi_conf = app.get_expect_component::<OpenApiConfig>();
+        finish_openapi(app, router, openapi_conf, global_prefix)
+    };
+
+    let mut router = router.layer(Extension(AppState { app: app.clone() }));
+
+    if !global_prefix.is_empty() {
+        router = axum::Router::new().nest(global_prefix, router)
+    };
+
+    router
+}
+
+impl WebPlugin {
+    async fn schedule(app: Arc<App>, config: ServerConfig) -> Result<String> {
+        // 1. assemble final router (groups, layers, openapi, AppState, global prefix)
+        let router = finalize_router(&app, &config.global_prefix);
 
         // 3. bind tcp listener
         let addr = SocketAddr::from((config.binding, config.port));
@@ -413,22 +457,13 @@ impl WebPlugin {
             .with_context(|| format!("bind tcp listener failed:{addr}"))?;
         tracing::info!("bind tcp listener: {addr}");
 
-        // 3. openapi
-        #[cfg(feature = "openapi")]
-        let router = {
-            let openapi_conf = app.get_expect_component::<OpenApiConfig>();
-            finish_openapi(&app, router, openapi_conf, &config.global_prefix)
-        };
-
-        // 4. axum server
-        let mut router = router.layer(Extension(AppState { app }));
-
-        if !config.global_prefix.is_empty() {
-            router = axum::Router::new().nest(&config.global_prefix, router)
-        };
-
-
         tracing::info!("axum server started");
+        // summer-nacos listens for this to register the HTTP endpoint (with grpc if both plugins run).
+        app.publish(ServerStartedEvent {
+            addr,
+            protocol: ServerProtocol::Http,
+        })
+        .await?;
         if config.connect_info {
             // with client connect info
             let service = router.into_make_service_with_connect_info::<SocketAddr>();
@@ -518,7 +553,10 @@ fn finish_openapi(
     openapi_conf: OpenApiConfig,
     global_prefix: &str,
 ) -> axum::Router {
-    let router = router.nest_api_service(&openapi_conf.doc_prefix, docs_routes(&openapi_conf, global_prefix));
+    let router = router.nest_api_service(
+        &openapi_conf.doc_prefix,
+        docs_routes(&openapi_conf, global_prefix),
+    );
 
     let mut api = app.get_component::<OpenApi>().unwrap_or_else(|| OpenApi {
         info: openapi_conf.info,
@@ -546,7 +584,10 @@ fn finish_openapi(
 }
 
 #[cfg(feature = "openapi")]
-pub fn docs_routes(OpenApiConfig { doc_prefix, info }: &OpenApiConfig, global_prefix: &str) -> aide::axum::ApiRouter {
+pub fn docs_routes(
+    OpenApiConfig { doc_prefix, info }: &OpenApiConfig,
+    global_prefix: &str,
+) -> aide::axum::ApiRouter {
     let router = aide::axum::ApiRouter::new();
     let _openapi_path = &format!("{global_prefix}{doc_prefix}/openapi.json");
     let _doc_title = &info.title;

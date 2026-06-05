@@ -13,16 +13,24 @@ members = [
     "summer-stream",
     "summer-mail",
     "summer-opentelemetry",
-    "summer-opendal",
     "summer-apalis",
-    "summer-sa-token",
-    "examples/*",
+    "summer-nacos",
+    "summer-xxl-job",
+    "summer-test",
+    "examples/getting-started/*",
+    "examples/web/*",
+    "examples/grpc/*",
+    "examples/stream/*",
+    "examples/data/*",
+    "examples/job/*",
+    "examples/integrations/*",
+    "examples/di/*",
 ]
 default-members = ["summer", "summer-*"]
 exclude = ["examples/**"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.7.1"
 edition = "2021"
 license = "MIT"
 authors = ["holmofy"]
@@ -31,22 +39,26 @@ repository = "https://github.com/summer-rs/summer-rs"
 [workspace.dependencies]
 aide = "0.16.0-alpha.2"
 anyhow = "1.0"
-apalis = "1.0.0-rc.6"
-apalis-redis = "1.0.0-rc.6"
-apalis-amqp = "1.0.0-rc.6"
-apalis-postgres = { version = "1.0.0-rc.6", default-features = false }
-apalis-mysql = { version = "1.0.0-rc.6", default-features = false }
-apalis-sqlite = { version = "1.0.0-rc.6", default-features = false }
-apalis-workflow = "0.1.0-rc.6"
-apalis-cron = "1.0.0-rc.6"
-apalis-board = "1.0.0-rc.6"
+apalis = "1.0.0-rc.8"
+apalis-redis = "1.0.0-rc.8"
+apalis-amqp = "1.0.0-rc.8"
+apalis-postgres = { version = "1.0.0-rc.8", default-features = false }
+apalis-mysql = { version = "1.0.0-rc.8", default-features = false }
+apalis-sqlite = { version = "1.0.0-rc.8", default-features = false }
+apalis-workflow = "0.1.0-rc.8"
+apalis-cron = "1.0.0-rc.8"
+apalis-board = "1.0.0-rc.8"
 async-trait = "0.1"
 axum = "0.8"
+axum-test = "20"
 byte-unit = "5.1"
 chrono = "0.4"
 dashmap = "6.1"
 dotenvy = "0.15.7"
 futures-util = "0.3"
+google-cloud-auth = "1.9"
+google-cloud-pubsub = "0.33"
+bytes = "1"
 http = "1"
 http-body = "1"
 indexmap = "2.13"
@@ -74,7 +86,7 @@ quote = "1.0"
 redis = "1.0"
 rmpv = "1.3"
 schemars = "1.1"
-sea-orm = "2.0.0-rc.37"
+sea-orm = "2.0.0-rc.38"
 sea-streamer = "0.5"
 serde = "1.0"
 serde_json = "1.0"
@@ -82,10 +94,10 @@ serde-toml-merge = "0.3.10"
 socketioxide = "0.18.2"
 sqlx = "0.8"
 syn = "2.0"
-sa-token-plugin-axum = "0.1.12"
-sa-token-core = "0.1.12"
-sa-token-adapter = "0.1.12"
-sa-token-storage-memory = "0.1.12"
+sa-token-plugin-axum = "0.1.15"
+sa-token-core = "0.1.15"
+sa-token-adapter = "0.1.15"
+sa-token-storage-memory = "0.1.15"
 thiserror = "2.0"
 tokio = "1.47"
 tokio-cron-scheduler = "0.15"
@@ -98,9 +110,14 @@ tower = "0.5"
 tower-http = "0.6"
 tower-layer = "0.3"
 tower-service = "0.3"
+validator = { version = "0.20", features = ["derive"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-error = "0.2"
+tracing-log = "0.2"
 tracing-opentelemetry = "0.32"
 tracing-subscriber = "0.3"
 uuid = "1"
+nacos-sdk = { version = "0.8", default-features = false }
+local-ip-address = "0.6"
+xxljob-sdk-rs = "0.1"

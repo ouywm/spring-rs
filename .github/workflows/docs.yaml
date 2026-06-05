@@ -18,7 +18,7 @@ jobs:
     steps:
     - name: Checkout main
       uses: actions/checkout@v4
-    
+
     - name: Checkout contrib-plugins as a subdirectory
       uses: actions/checkout@v4
       with:
@@ -34,7 +34,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Build plugin-example
-      run: cargo build --manifest-path examples/plugin-example/Cargo.toml
+      run: cargo build --manifest-path examples/integrations/plugin-example/Cargo.toml
 
     - name: Copy config-schema.json
       run: |

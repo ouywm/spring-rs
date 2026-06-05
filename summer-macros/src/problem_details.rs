@@ -214,29 +214,29 @@ fn generate_problem_details_for_variant(
     variant_name: &str, 
     attrs: &[Attribute]
 ) -> syn::Result<TokenStream> {
-    // 解析自定义属性
+    // Parse custom attributes
     let problem_type = get_problem_type_from_attrs(attrs)?;
     let title = get_title_from_attrs(attrs)?;
     let detail = get_detail_from_attrs(attrs)?;
     let instance = get_instance_from_attrs(attrs)?;
     let error_format = get_error_format_from_attrs(attrs)?;
     
-    // 如果有自定义的 problem_type，使用它；否则根据状态码自动生成
+    // Use custom problem_type if provided; otherwise auto-generate from status code
     let problem_details_expr = if let Some(custom_type) = problem_type {
         let title_expr = if let Some(title_val) = title {
-            quote! { #title_val.to_string() }
+            resolve_string_or_format_expr(enum_ident, variant_ident, variant_fields, &title_val)?
         } else if let Some(error_fmt) = &error_format {
-            // 如果有格式化的 error 属性，使用格式化后的字符串作为 title
+            // Use formatted #[error] string as title
             generate_format_expr(enum_ident, variant_ident, variant_fields, error_fmt)?
         } else {
             let default_title = format!("{} Error", variant_name);
             quote! { #default_title.to_string() }
         };
-        
+
         let detail_expr = if let Some(detail_val) = detail {
-            quote! { #detail_val.to_string() }
+            resolve_string_or_format_expr(enum_ident, variant_ident, variant_fields, &detail_val)?
         } else if let Some(error_fmt) = &error_format {
-            // 如果有格式化的 error 属性，也可以用作 detail
+            // Use formatted #[error] string as detail
             generate_format_expr(enum_ident, variant_ident, variant_fields, error_fmt)?
         } else {
             let default_detail = format!("{} occurred", variant_name);
@@ -257,11 +257,11 @@ fn generate_problem_details_for_variant(
         
         builder
     } else {
-        // 使用默认的状态码映射，problem_type 使用 about:blank
+        // Use default status code mapping with about:blank as problem_type
         match status_code {
             400 => {
                 let detail_expr = if let Some(detail_val) = detail {
-                    quote! { #detail_val.to_string() }
+                    resolve_string_or_format_expr(enum_ident, variant_ident, variant_fields, &detail_val)?
                 } else if let Some(error_fmt) = &error_format {
                     generate_format_expr(enum_ident, variant_ident, variant_fields, error_fmt)?
                 } else {
@@ -280,7 +280,7 @@ fn generate_problem_details_for_variant(
             },
             404 => {
                 let resource_expr = if let Some(detail_val) = detail {
-                    quote! { #detail_val.to_string() }
+                    resolve_string_or_format_expr(enum_ident, variant_ident, variant_fields, &detail_val)?
                 } else if let Some(error_fmt) = &error_format {
                     generate_format_expr(enum_ident, variant_ident, variant_fields, error_fmt)?
                 } else {
@@ -297,20 +297,20 @@ fn generate_problem_details_for_variant(
                 ::summer_web::problem_details::ProblemDetails::service_unavailable()
             },
             _ => {
-                // 对于其他状态码，使用 about:blank 作为默认 problem_type
+                // For other status codes, use about:blank as default problem_type
                 let problem_type = "about:blank".to_string();
                 
                 let title_expr = if let Some(title_val) = title {
-                    quote! { #title_val.to_string() }
+                    resolve_string_or_format_expr(enum_ident, variant_ident, variant_fields, &title_val)?
                 } else if let Some(error_fmt) = &error_format {
                     generate_format_expr(enum_ident, variant_ident, variant_fields, error_fmt)?
                 } else {
                     let default_title = format!("{} Error", variant_name);
                     quote! { #default_title.to_string() }
                 };
-                
+
                 let detail_expr = if let Some(detail_val) = detail {
-                    quote! { #detail_val.to_string() }
+                    resolve_string_or_format_expr(enum_ident, variant_ident, variant_fields, &detail_val)?
                 } else if let Some(error_fmt) = &error_format {
                     generate_format_expr(enum_ident, variant_ident, variant_fields, error_fmt)?
                 } else {
@@ -349,7 +349,7 @@ fn get_problem_type_from_attrs(attrs: &[Attribute]) -> syn::Result<Option<String
 }
 
 fn get_title_from_attrs(attrs: &[Attribute]) -> syn::Result<Option<String>> {
-    // 首先检查是否有 #[title("...")] 属性
+    // First check for explicit #[title("...")] attribute
     for attr in attrs {
         if attr.path().is_ident("title") {
             let value: syn::LitStr = attr.parse_args()?;
@@ -357,18 +357,18 @@ fn get_title_from_attrs(attrs: &[Attribute]) -> syn::Result<Option<String>> {
         }
     }
     
-    // 如果没有 title 属性，尝试从 #[error("...")] 属性中提取
+    // If no title attribute, try to derive from #[error("...")] attribute
     for attr in attrs {
         if attr.path().is_ident("error") {
-            // 解析 error 属性的内容
+            // Parse the error attribute content
             if let Ok(meta) = attr.parse_args::<syn::LitStr>() {
                 let error_msg = meta.value();
-                // 检查是否包含格式化参数，如果包含则不使用作为 title
+                // Skip if it contains format parameters (not suitable as title)
                 if error_msg.contains('{') && error_msg.contains('}') {
-                    // 包含格式化参数，不适合直接作为 title
+                    // Contains format parameters, not suitable as title
                     return Ok(None);
                 }
-                // 如果是简单的字符串字面量，使用它作为 title
+                // Simple string literal, use as title
                 return Ok(Some(error_msg));
             }
         }
@@ -400,17 +400,17 @@ fn get_instance_from_attrs(attrs: &[Attribute]) -> syn::Result<Option<String>> {
 fn get_error_format_from_attrs(attrs: &[Attribute]) -> syn::Result<Option<String>> {
     for attr in attrs {
         if attr.path().is_ident("error") {
-            // 检查是否是 transparent
+            // Check for transparent
             if let Ok(meta) = attr.parse_args::<syn::Ident>() {
                 if meta == "transparent" {
                     return Ok(None);
                 }
             }
             
-            // 尝试解析为字符串字面量
+            // Try to parse as a string literal
             if let Ok(meta) = attr.parse_args::<syn::LitStr>() {
                 let error_msg = meta.value();
-                // 如果包含格式化参数，返回格式化字符串
+                // Contains format parameters, return as format string
                 if error_msg.contains('{') && error_msg.contains('}') {
                     return Ok(Some(error_msg));
                 }
@@ -418,6 +418,19 @@ fn get_error_format_from_attrs(attrs: &[Attribute]) -> syn::Result<Option<String
         }
     }
     Ok(None)
+}
+
+fn resolve_string_or_format_expr(
+    enum_ident: &syn::Ident,
+    variant_ident: &syn::Ident,
+    variant_fields: &Fields,
+    value: &str,
+) -> syn::Result<TokenStream> {
+    if value.contains('{') && value.contains('}') {
+        generate_format_expr(enum_ident, variant_ident, variant_fields, value)
+    } else {
+        Ok(quote! { #value.to_string() })
+    }
 }
 
 fn generate_format_expr(
@@ -428,19 +441,19 @@ fn generate_format_expr(
 ) -> syn::Result<TokenStream> {
     match variant_fields {
         Fields::Unit => {
-            // 单元变体，直接返回格式化字符串（不应该有参数）
+            // Unit variant, return format string directly (should not have parameters)
             Ok(quote! { #format_str.to_string() })
         },
         Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
-            // 单个未命名字段，使用 inner 作为格式化参数
+            // Single unnamed field, use `inner` as format argument
             Ok(quote! { format!(#format_str, inner) })
         },
         Fields::Unnamed(_) => {
-            // 多个未命名字段，暂时不支持复杂格式化
+            // Multiple unnamed fields, complex formatting not yet supported
             Ok(quote! { #format_str.to_string() })
         },
         Fields::Named(_) => {
-            // 命名字段，暂时不支持复杂格式化
+            // Named fields, complex formatting not yet supported
             Ok(quote! { #format_str.to_string() })
         }
     }
@@ -501,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_get_title_from_attrs() {
-        // 测试显式的 title 属性
+        // Test explicit title attribute
         let attrs: Vec<syn::Attribute> = vec![
             syn::parse_quote! { #[title("Test Title")] }
         ];
@@ -512,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_get_title_from_error_attr() {
-        // 测试从 error 属性推导 title
+        // Test deriving title from #[error] attribute
         let attrs: Vec<syn::Attribute> = vec![
             syn::parse_quote! { #[error("Validation Failed")] }
         ];
@@ -523,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_get_title_from_error_attr_with_params() {
-        // 测试包含格式化参数的 error 属性不会被用作 title
+        // Test that #[error] with format params is NOT used as title
         let attrs: Vec<syn::Attribute> = vec![
             syn::parse_quote! { #[error("Error occurred: {0:?}")] }
         ];
@@ -534,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_get_error_format_from_attrs() {
-        // 测试提取格式化的 error 属性
+        // Test extracting formatted #[error] attribute
         let attrs: Vec<syn::Attribute> = vec![
             syn::parse_quote! { #[error("TeaPod error occurred: {0:?}")] }
         ];
@@ -550,7 +563,7 @@ mod tests {
         let enum_ident = syn::parse_quote! { TestEnum };
         let variant_ident = syn::parse_quote! { TestVariant };
         
-        // 创建一个包含单个未命名字段的 Fields
+        // Create Fields with a single unnamed field
         let field: Field = syn::parse_quote! { CustomErrorSchema };
         let mut unnamed = syn::punctuated::Punctuated::new();
         unnamed.push(field);
@@ -567,13 +580,101 @@ mod tests {
 
     #[test]
     fn test_title_precedence() {
-        // 测试 title 属性优先于 error 属性
+        // Test that #[title] takes precedence over #[error]
         let attrs: Vec<syn::Attribute> = vec![
             syn::parse_quote! { #[title("Explicit Title")] },
             syn::parse_quote! { #[error("Error Message")] }
         ];
-        
+
         let result = get_title_from_attrs(&attrs).unwrap();
         assert_eq!(result, Some("Explicit Title".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_string_or_format_expr_static() {
+        let enum_ident: syn::Ident = syn::parse_quote! { TestEnum };
+        let variant_ident: syn::Ident = syn::parse_quote! { TestVariant };
+        let fields = Fields::Unit;
+
+        let result = resolve_string_or_format_expr(&enum_ident, &variant_ident, &fields, "fixed message").unwrap();
+        let expected = quote! { "fixed message".to_string() };
+        assert_eq!(result.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_resolve_string_or_format_expr_with_interpolation() {
+        use syn::{FieldsUnnamed, Field};
+
+        let enum_ident: syn::Ident = syn::parse_quote! { TestEnum };
+        let variant_ident: syn::Ident = syn::parse_quote! { TestVariant };
+
+        let field: Field = syn::parse_quote! { String };
+        let mut unnamed = syn::punctuated::Punctuated::new();
+        unnamed.push(field);
+        let fields = Fields::Unnamed(FieldsUnnamed {
+            paren_token: Default::default(),
+            unnamed,
+        });
+
+        let result = resolve_string_or_format_expr(&enum_ident, &variant_ident, &fields, "User {0} not found").unwrap();
+        let expected = quote! { format!("User {0} not found", inner) };
+        assert_eq!(result.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_detail_interpolation_in_derive() {
+        // Test that #[detail("User {0} not found")] generates format!(...) for single unnamed field
+        let input: DeriveInput = syn::parse_quote! {
+            #[derive(ProblemDetails)]
+            pub enum TestErrors {
+                #[status_code(404)]
+                #[detail("User {0} not found")]
+                #[error("not found: {0}")]
+                UserNotFound(String),
+            }
+        };
+
+        let result = expand_derive(input).unwrap();
+        let result_str = result.to_string();
+        // Should generate format!(...) call, not .to_string()
+        assert!(result_str.contains("format !"), "detail interpolation should generate format! call, got: {}", result_str);
+    }
+
+    #[test]
+    fn test_title_interpolation_in_derive() {
+        // Test that #[title("Error: {0}")] generates format!(...) for single unnamed field
+        let input: DeriveInput = syn::parse_quote! {
+            #[derive(ProblemDetails)]
+            pub enum TestErrors {
+                #[status_code(422)]
+                #[problem_type("https://example.com/problems/test")]
+                #[title("Error: {0}")]
+                #[error("some error: {0}")]
+                CustomError(String),
+            }
+        };
+
+        let result = expand_derive(input).unwrap();
+        let result_str = result.to_string();
+        assert!(result_str.contains("format !"), "title interpolation should generate format! call, got: {}", result_str);
+    }
+
+    #[test]
+    fn test_static_detail_unchanged() {
+        // Test that static #[detail("fixed message")] behavior is unchanged
+        let input: DeriveInput = syn::parse_quote! {
+            #[derive(ProblemDetails)]
+            pub enum TestErrors {
+                #[status_code(400)]
+                #[detail("fixed validation error")]
+                #[error("bad request")]
+                BadRequest,
+            }
+        };
+
+        let result = expand_derive(input).unwrap();
+        let result_str = result.to_string();
+        assert!(result_str.contains("\"fixed validation error\" . to_string ()"),
+            "static detail should use .to_string(), got: {}", result_str);
     }
 }
