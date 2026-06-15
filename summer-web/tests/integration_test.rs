@@ -1,6 +1,54 @@
 use summer::app::AppBuilder;
 use summer::plugin::ComponentRegistry;
 use summer_web::{Router, WebConfigurator};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static DEFAULT_GROUP_INSTALLS: AtomicUsize = AtomicUsize::new(0);
+static NON_DEFAULT_GROUP_INSTALLS: AtomicUsize = AtomicUsize::new(0);
+
+struct DefaultGroupSideEffectRegistrar;
+
+impl summer_web::handler::TypedHandlerRegistrar for DefaultGroupSideEffectRegistrar {
+    fn install_route(&self, router: Router) -> Router {
+        DEFAULT_GROUP_INSTALLS.fetch_add(1, Ordering::SeqCst);
+        router
+    }
+}
+
+summer_web::submit_typed_handler!(DefaultGroupSideEffectRegistrar);
+
+struct NonDefaultGroupSideEffectRegistrar;
+
+impl summer_web::handler::TypedHandlerRegistrar for NonDefaultGroupSideEffectRegistrar {
+    fn install_route(&self, router: Router) -> Router {
+        NON_DEFAULT_GROUP_INSTALLS.fetch_add(1, Ordering::SeqCst);
+        router
+    }
+
+    fn group(&self) -> &'static str {
+        "side-effect-group"
+    }
+}
+
+summer_web::submit_typed_handler!(NonDefaultGroupSideEffectRegistrar);
+
+#[test]
+fn test_grouped_routers_take_groups_without_reinstalling_handlers() {
+    DEFAULT_GROUP_INSTALLS.store(0, Ordering::SeqCst);
+    NON_DEFAULT_GROUP_INSTALLS.store(0, Ordering::SeqCst);
+
+    let mut grouped = summer_web::handler::auto_grouped_routers();
+
+    assert_eq!(DEFAULT_GROUP_INSTALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(NON_DEFAULT_GROUP_INSTALLS.load(Ordering::SeqCst), 1);
+
+    let _default_router = grouped.take_default();
+    let _group_router = grouped.take_group("side-effect-group");
+    let _missing_router = grouped.take_group("missing-group");
+
+    assert_eq!(DEFAULT_GROUP_INSTALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(NON_DEFAULT_GROUP_INSTALLS.load(Ordering::SeqCst), 1);
+}
 
 #[tokio::test]
 async fn test_router_registration() {
@@ -477,5 +525,107 @@ mod test_problem_details_macro {
             .unwrap();
         
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(feature = "openapi")]
+mod test_openapi_route_registration {
+    use super::*;
+    use summer_web::handler::TypedHandlerRegistrar;
+
+    static OPENAPI_OPERATION_ERRORS: AtomicUsize = AtomicUsize::new(0);
+
+    #[summer_web::get_api("/openapi-duplicate-check/{id}")]
+    async fn get_openapi_duplicate_check() -> &'static str {
+        "get"
+    }
+
+    #[summer_web::delete_api("/openapi-duplicate-check/{id}")]
+    async fn delete_openapi_duplicate_check() -> &'static str {
+        "delete"
+    }
+
+    #[test]
+    fn test_same_path_openapi_methods_do_not_emit_duplicate_operation_errors() {
+        OPENAPI_OPERATION_ERRORS.store(0, Ordering::SeqCst);
+        summer_web::aide::generate::on_error(|error| {
+            if matches!(error, summer_web::aide::Error::OperationExists(_, _)) {
+                OPENAPI_OPERATION_ERRORS.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        summer_web::aide::generate::extract_schemas(false);
+
+        let router = Router::new();
+        let router = get_openapi_duplicate_check.install_route(router);
+        let router = delete_openapi_duplicate_check.install_route(router);
+
+        assert_eq!(OPENAPI_OPERATION_ERRORS.load(Ordering::SeqCst), 0);
+
+        let mut api = summer_web::OpenApi::default();
+        let _router = router.finish_api(&mut api);
+        let paths = api.paths.expect("OpenAPI paths should be generated").paths;
+        let path_item = paths
+            .get("/openapi-duplicate-check/{id}")
+            .expect("documented path should exist");
+        let summer_web::aide::openapi::ReferenceOr::Item(path_item) = path_item else {
+            panic!("documented path should be an inline item");
+        };
+
+        assert!(path_item.get.is_some());
+        assert!(path_item.delete.is_some());
+    }
+
+    #[summer_web::middlewares(summer_web::axum::middleware::from_fn(pass))]
+    mod middleware_openapi_duplicate_check {
+        use super::*;
+        #[allow(unused_imports)]
+        use summer_web::{delete_api, get_api};
+
+        async fn pass(
+            request: summer_web::extractor::Request,
+            next: summer_web::axum::middleware::Next,
+        ) -> summer_web::axum::response::Response {
+            next.run(request).await
+        }
+
+        #[get_api("/middleware-openapi-duplicate-check/{id}")]
+        async fn get_middleware_openapi_duplicate_check() -> &'static str {
+            "get"
+        }
+
+        #[delete_api("/middleware-openapi-duplicate-check/{id}")]
+        async fn delete_middleware_openapi_duplicate_check() -> &'static str {
+            "delete"
+        }
+
+        #[test]
+        fn test_same_path_middleware_openapi_methods_do_not_emit_duplicate_operation_errors() {
+            OPENAPI_OPERATION_ERRORS.store(0, Ordering::SeqCst);
+            summer_web::aide::generate::on_error(|error| {
+                if matches!(error, summer_web::aide::Error::OperationExists(_, _)) {
+                    OPENAPI_OPERATION_ERRORS.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+            summer_web::aide::generate::extract_schemas(false);
+
+            let router = Router::new();
+            let router =
+                middleware_openapi_duplicate_checkMiddlewareRegistrar.install_route(router);
+
+            assert_eq!(OPENAPI_OPERATION_ERRORS.load(Ordering::SeqCst), 0);
+
+            let mut api = summer_web::OpenApi::default();
+            let _router = router.finish_api(&mut api);
+            let paths = api.paths.expect("OpenAPI paths should be generated").paths;
+            let path_item = paths
+                .get("/middleware-openapi-duplicate-check/{id}")
+                .expect("documented path should exist");
+            let summer_web::aide::openapi::ReferenceOr::Item(path_item) = path_item else {
+                panic!("documented path should be an inline item");
+            };
+
+            assert!(path_item.get.is_some());
+            assert!(path_item.delete.is_some());
+        }
     }
 }

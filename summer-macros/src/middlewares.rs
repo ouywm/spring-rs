@@ -272,7 +272,7 @@ impl OpenApiCodegen {
         (input_gen, output_gen)
     }
 
-    /// Generate the `api_route_docs_with` binding tokens for a given router ident.
+    /// Generate the `api_route_docs` binding tokens for a given router ident.
     fn operation_binder_tokens(
         &self,
         route: &RouteInfo,
@@ -295,10 +295,9 @@ impl OpenApiCodegen {
                         #output_gen
                         #status_code_gen
                     });
-                    #router_ident = #router_ident.api_route_docs_with(
+                    #router_ident = #router_ident.api_route_docs(
                         #path,
                         ::summer_web::aide::axum::routing::ApiMethodDocs::new(#method_str, __operation),
-                        __transform,
                     );
                 }
             })
@@ -344,18 +343,20 @@ fn generate_route_registration(route: &RouteInfo) -> TokenStream2 {
             quote! {
                 #method_router
                 let __method_router = ::summer_web::ApiMethodRouter::from(__method_router);
-                __module_router = ::summer_web::Router::api_route(__module_router, #path, __method_router);
-                let __transform = ::summer_web::default_transform;
+                __module_router = ::summer_web::Router::route(__module_router, #path, __method_router);
+                let mut __docs_router = ::summer_web::Router::new();
                 #(#op_binders)*
+                __module_router = __module_router.merge(__docs_router);
             }
         } else {
             quote! {
                 let mut __function_router = ::summer_web::Router::new();
                 #method_router
                 let __method_router = ::summer_web::ApiMethodRouter::from(__method_router);
-                __function_router = ::summer_web::Router::api_route(__function_router, #path, __method_router);
-                let __transform = ::summer_web::default_transform;
+                __function_router = ::summer_web::Router::route(__function_router, #path, __method_router);
+                let mut __docs_router = ::summer_web::Router::new();
                 #(#op_binders)*
+                __function_router = __function_router.merge(__docs_router);
                 #(let __function_router = __function_router.layer(#fn_mw_layers);)*
                 __module_router = __module_router.merge(__function_router);
             }
@@ -396,9 +397,10 @@ fn generate_function_route_registration(
             #(let __method_router = ::summer_web::MethodRouter::on(__method_router, #methods, #func_name);)*
             #(let __method_router = __method_router.layer(#middleware_expressions);)*
             let __method_router = ::summer_web::ApiMethodRouter::from(__method_router);
-            __router = ::summer_web::Router::api_route(__router, #path, __method_router);
-            let __transform = ::summer_web::default_transform;
+            __router = ::summer_web::Router::route(__router, #path, __method_router);
+            let mut __docs_router = ::summer_web::Router::new();
             #(#op_binders)*
+            __router = __router.merge(__docs_router);
         }
     } else {
         quote! {

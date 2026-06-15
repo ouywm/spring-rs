@@ -3,6 +3,10 @@ use std::collections::HashMap;
 
 pub use inventory::submit;
 
+/// Group name used by hand-written registrars that don't override
+/// [`TypedHandlerRegistrar::group`].
+pub const DEFAULT_GROUP: &str = "default";
+
 /// TypeHandler is used to configure the summer-macro marked route handler
 pub trait TypedHandlerRegistrar: Send + Sync + 'static {
     /// install route
@@ -10,16 +14,16 @@ pub trait TypedHandlerRegistrar: Send + Sync + 'static {
 
     /// Route group this handler belongs to.
     ///
-    /// Used by [`auto_grouped_routers`] to bucket handlers so plugins can apply middleware
-    /// (via `add_group_layer`) to only the routes belonging to their own crate/group without
-    /// affecting the rest of the application.
+    /// Used by [`auto_grouped_routers`] to bucket handlers so callers can compose routers
+    /// per crate/group and apply group-specific middleware without affecting the rest of
+    /// the application.
     ///
     /// - Hand-written impls get the default `"default"` bucket.
     /// - The `#[post("/...", group = "xxx")]` macro overrides this. When no `group = "..."`
     ///   is written on the macro, it falls back to `env!("CARGO_PKG_NAME")`, so each crate
     ///   is automatically its own group.
     fn group(&self) -> &'static str {
-        "default"
+        DEFAULT_GROUP
     }
 }
 
@@ -71,29 +75,50 @@ pub fn auto_router() -> Router {
 
 /// Routers bucketed by group tag.
 ///
-/// - [`GroupedRouters::default`] holds handlers registered without an explicit
-///   `group = "..."` — these are merged straight into the main router.
-/// - [`GroupedRouters::by_group`] holds handlers that declared a specific group;
-///   [`crate::WebPlugin`] applies any group-specific layers (registered via
-///   `add_group_layer`) to each named group router **before** merging everything
-///   into the final axum Router, so the layer only affects that group's routes.
+/// Use [`GroupedRouters::take_default`] and [`GroupedRouters::take_group`] to build
+/// the final router explicitly after a single inventory collection pass.
 #[derive(Default)]
 pub struct GroupedRouters {
     /// Routes registered without a `group = "..."` attribute.
-    pub default: Router,
+    default: Router,
     /// Routes registered with `group = "NAME"`, keyed by the group name.
-    pub by_group: HashMap<String, Router>,
+    by_group: HashMap<String, Router>,
+}
+
+impl GroupedRouters {
+    /// Remove and return the default group router.
+    pub fn take_default(&mut self) -> Router {
+        std::mem::replace(&mut self.default, Router::new())
+    }
+
+    /// Remove and return the router for `group`.
+    ///
+    /// Missing groups return an empty router. Passing [`DEFAULT_GROUP`] is equivalent
+    /// to [`Self::take_default`].
+    pub fn take_group(&mut self, group: impl AsRef<str>) -> Router {
+        let group = group.as_ref();
+        if group == DEFAULT_GROUP {
+            return self.take_default();
+        }
+
+        self.by_group.remove(group).unwrap_or_else(Router::new)
+    }
+
+    pub(crate) fn into_parts(self) -> (Router, HashMap<String, Router>) {
+        (self.default, self.by_group)
+    }
 }
 
 /// Collect all inventory-registered handlers bucketed by their [`TypedHandlerRegistrar::group`]
 /// tag.
 ///
-/// Handlers in the `"default"` group (e.g. hand-written impls that don't override `group()`)
-/// land in [`GroupedRouters::default`]. Everything else lands in
-/// [`GroupedRouters::by_group`] under its group key.
+/// Handlers in the [`DEFAULT_GROUP`] group (e.g. hand-written impls that don't override `group()`)
+/// are returned by [`GroupedRouters::take_default`]. Everything else is returned by
+/// [`GroupedRouters::take_group`] under its group key.
 ///
 /// This is the bucketed counterpart of [`auto_router`]. The `auto_config` macro expands to
-/// call this one instead, so plugins can target their own routes via `add_group_layer`.
+/// call this one so named groups can be merged separately by the web plugin or taken
+/// explicitly by applications.
 pub fn auto_grouped_routers() -> GroupedRouters {
     #[cfg(feature = "openapi")]
     crate::enable_openapi();
@@ -103,7 +128,7 @@ pub fn auto_grouped_routers() -> GroupedRouters {
 
     for handler in inventory::iter::<&dyn TypedHandlerRegistrar> {
         let group = handler.group();
-        if group == "default" {
+        if group == DEFAULT_GROUP {
             default = handler.install_route(default);
         } else {
             let existing = by_group.remove(group).unwrap_or_else(Router::new);
@@ -112,35 +137,6 @@ pub fn auto_grouped_routers() -> GroupedRouters {
     }
 
     GroupedRouters { default, by_group }
-}
-
-/// Collect routes for a crate group.
-///
-/// Returns an empty `Router` if the group doesn't exist or has no handlers.
-/// This is useful for crates that want to collect their own routes and apply
-/// their own middleware/layers without writing manual `router()` functions.
-///
-/// # Example
-///
-/// ```ignore
-/// // In your crate's router module:
-/// use summer_web::handler::grouped_router;
-///
-/// pub fn router() -> Router {
-///     grouped_router("my-crate-group")
-/// }
-/// ```
-pub fn grouped_router(group: &str) -> Router {
-    #[cfg(feature = "openapi")]
-    crate::enable_openapi();
-
-    let mut router = Router::new();
-    for handler in inventory::iter::<&dyn TypedHandlerRegistrar> {
-        if handler.group() == group {
-            router = handler.install_route(router);
-        }
-    }
-    router
 }
 
 #[cfg(feature = "socket_io")]

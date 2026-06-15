@@ -126,8 +126,8 @@ struct Args {
     transform: Option<syn::ExprPath>,
     /// Optional group tag to bucket handlers when registering via inventory.
     /// Defaults to `env!("CARGO_PKG_NAME")` when absent — i.e. every crate is its own
-    /// group by default, so plugins can apply middleware to their own routes via
-    /// `add_group_layer` without affecting handlers defined in other crates.
+    /// group by default, so applications can take and compose grouped routers without
+    /// affecting handlers defined in other crates.
     group: Option<syn::LitStr>,
 }
 
@@ -409,6 +409,9 @@ impl ToTokens for Route {
                         .iter()
                         .map(|m| {
                             let method_str = m.as_lowercase_str();
+                            let docs = quote! {
+                                ::summer_web::aide::axum::routing::ApiMethodDocs::new(#method_str, __operation)
+                            };
                             quote! {
                                 let mut __operation = #operation;
                                 ::summer_web::aide::generate::in_context(|ctx| {
@@ -418,23 +421,25 @@ impl ToTokens for Route {
                                     #gen_output
                                     #status_code_gen
                                 });
-                                __router = __router.api_route_docs_with(#path, ::summer_web::aide::axum::routing::ApiMethodDocs::new(#method_str, __operation), __transform);
+                                __docs_router = __docs_router.api_route_docs(#path, #docs);
                             }
                         });
                     let transform_ts = if let Some(t) = transform {
-                        quote! { let __transform = #t; }
-                    } else {
                         quote! {
-                            let __transform = ::summer_web::default_transform;
+                            __docs_router = __docs_router.with_path_items(#t);
                         }
+                    } else {
+                        quote! {}
                     };
                     quote! {
                         let __method_router = ::summer_web::MethodRouter::new();
                         #(#method_binder)*
                         let __method_router = ::summer_web::ApiMethodRouter::from(__method_router);
-                        __router = ::summer_web::Router::api_route(__router, #path, __method_router);
-                        #transform_ts
+                        __router = ::summer_web::Router::route(__router, #path, __method_router);
+                        let mut __docs_router = ::summer_web::Router::new();
                         #(#operation_binder)*
+                        #transform_ts
+                        __router = __router.merge(__docs_router);
                     }
                 } else {
                     let method_binder = methods

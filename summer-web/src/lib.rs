@@ -146,18 +146,9 @@ pub type RouterLayers = Vec<RouterLayer>;
 /// Named groups of routers produced by the `#[post("/...", group = "xxx")]` macros,
 /// keyed by group name.
 ///
-/// Populated by [`WebConfigurator::add_grouped_routers`]. [`WebPlugin::schedule`] applies
-/// any group-specific layers registered via [`LayerConfigurator::add_group_layer`] to each
-/// named group router **before** merging it into the main router, so the layer only
-/// affects that group's routes.
+/// Populated by [`WebConfigurator::add_grouped_routers`]. [`WebPlugin::schedule`] merges
+/// these named routers into the main router.
 pub type GroupedRoutersByName = std::collections::HashMap<String, Router>;
-
-/// Map of group name → list of layer functions registered via
-/// [`LayerConfigurator::add_group_layer`].
-///
-/// Each layer is applied (in registration order) to the named group router during
-/// [`WebPlugin::schedule`] before merging into the main router.
-pub type GroupLayerMap = std::collections::HashMap<String, Vec<RouterLayer>>;
 
 /// Trait for adding layers to the web router
 pub trait LayerConfigurator {
@@ -175,30 +166,6 @@ pub trait LayerConfigurator {
     /// });
     /// ```
     fn add_router_layer<F>(&mut self, layer: F) -> &mut Self
-    where
-        F: Fn(Router) -> Router + Send + Sync + 'static;
-
-    /// Add a layer that applies **only** to the routes belonging to the given group.
-    ///
-    /// Routes join a group via the `#[post("/...", group = "NAME")]` macro (or its siblings
-    /// for other HTTP methods). Handlers without an explicit `group = "..."` fall back to
-    /// `env!("CARGO_PKG_NAME")`, so each crate is automatically its own group.
-    ///
-    /// The layer is applied during [`WebPlugin::schedule`] to the named group's router
-    /// **before** that router is merged into the main one, so it never leaks to handlers
-    /// in other groups.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use summer_web::LayerConfigurator;
-    ///
-    /// // In your plugin's build method:
-    /// app.add_group_layer("summer-ai-relay", move |router| {
-    ///     router.layer(AiAuthLayer::new(token_store.clone()))
-    /// });
-    /// ```
-    fn add_group_layer<F>(&mut self, group: impl Into<String>, layer: F) -> &mut Self
     where
         F: Fn(Router) -> Router + Send + Sync + 'static;
 }
@@ -220,25 +187,6 @@ impl LayerConfigurator for AppBuilder {
             self.add_component(layers)
         }
     }
-
-    fn add_group_layer<F>(&mut self, group: impl Into<String>, layer: F) -> &mut Self
-    where
-        F: Fn(Router) -> Router + Send + Sync + 'static,
-    {
-        let key = group.into();
-        if let Some(map) = self.get_component_ref::<GroupLayerMap>() {
-            unsafe {
-                let raw_ptr = ComponentRef::into_raw(map);
-                let map = &mut *(raw_ptr as *mut GroupLayerMap);
-                map.entry(key).or_default().push(Arc::new(layer));
-            }
-            self
-        } else {
-            let mut map: GroupLayerMap = std::collections::HashMap::new();
-            map.insert(key, vec![Arc::new(layer)]);
-            self.add_component(map)
-        }
-    }
 }
 
 /// OpenAPI
@@ -253,12 +201,10 @@ pub trait WebConfigurator {
     /// Register a bucketed set of routers produced by
     /// [`crate::handler::auto_grouped_routers`].
     ///
-    /// - `grouped.default` goes through the existing [`Self::add_router`] pipeline
+    /// - the default group goes through the existing [`Self::add_router`] pipeline
     ///   (merged into the main router inside [`WebPlugin::build`]).
-    /// - `grouped.by_group` is stored separately in a [`GroupedRoutersByName`] component
-    ///   so that [`WebPlugin::schedule`] can apply any group-specific layers — registered
-    ///   via [`LayerConfigurator::add_group_layer`] — before merging each named group
-    ///   into the main router.
+    /// - named groups are stored separately in a [`GroupedRoutersByName`] component
+    ///   and merged into the main router during [`WebPlugin::schedule`].
     fn add_grouped_routers(&mut self, grouped: crate::handler::GroupedRouters) -> &mut Self;
 
     /// Initialize OpenAPI Documents
@@ -285,12 +231,14 @@ impl WebConfigurator for AppBuilder {
     }
 
     fn add_grouped_routers(&mut self, grouped: crate::handler::GroupedRouters) -> &mut Self {
+        let (default, by_group) = grouped.into_parts();
+
         // default bucket → existing Routers list (merged together inside WebPlugin::build)
-        self.add_router(grouped.default);
+        self.add_router(default);
 
         // by_group bucket → GroupedRoutersByName component; merge on collisions so
         // multiple `add_grouped_routers` calls accumulate correctly.
-        if grouped.by_group.is_empty() {
+        if by_group.is_empty() {
             return self;
         }
 
@@ -298,14 +246,14 @@ impl WebConfigurator for AppBuilder {
             unsafe {
                 let raw = ComponentRef::into_raw(existing);
                 let existing = &mut *(raw as *mut GroupedRoutersByName);
-                for (name, router) in grouped.by_group {
+                for (name, router) in by_group {
                     let prev = existing.remove(&name).unwrap_or_else(Router::new);
                     existing.insert(name, prev.merge(router));
                 }
             }
             self
         } else {
-            self.add_component(grouped.by_group)
+            self.add_component(by_group)
         }
     }
 
@@ -402,22 +350,10 @@ pub async fn assemble_router(app: &mut AppBuilder) -> ServerConfig {
 pub fn finalize_router(app: &Arc<App>, global_prefix: &str) -> axum::Router {
     let mut router = app.get_expect_component::<Router>();
 
-    // Apply per-group layers and merge each named group into the main router.
-    // Done here (not in WebPlugin::build) because other plugins may register
-    // group layers via `add_group_layer` AFTER WebPlugin::build runs — they only
-    // need to depend on WebPlugin to see their named routers, not to register layers.
+    // Merge each named group into the main router.
     if let Some(groups) = app.get_component_ref::<GroupedRoutersByName>() {
-        let group_layers = app.get_component_ref::<GroupLayerMap>();
-        for (name, group_router) in groups.deref().iter() {
-            let mut gr = group_router.to_owned();
-            if let Some(ref layers_map) = group_layers {
-                if let Some(layer_list) = layers_map.deref().get(name) {
-                    for layer_fn in layer_list.iter() {
-                        gr = layer_fn(gr);
-                    }
-                }
-            }
-            router = router.merge(gr);
+        for group_router in groups.deref().values() {
+            router = router.merge(group_router.to_owned());
         }
     }
 
